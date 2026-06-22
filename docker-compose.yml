@@ -1,0 +1,14 @@
+services:
+  helmrail:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      HELMRAIL_DB_PATH: /data/helmrail.sqlite
+      # Set HELMRAIL_API_KEY to require bearer auth for /v1/* mutation endpoints.
+      # HELMRAIL_API_KEY: change-me
+    volumes:
+      - helmrail-data:/data
+
+volumes:
+  helmrail-data:
