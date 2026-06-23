@@ -26,6 +26,7 @@ from .connectors import (
     resolve_secret,
 )
 from .redaction import redact_json, redact_text
+from .model_catalog import ModelCatalog, load_catalog
 from .routing import DEFAULT_ROUTE_POLICIES, plan_route
 from .store import TraceStore
 from .ui import setup_page
@@ -250,6 +251,7 @@ def _probe_subscription(subscription: dict[str, Any]) -> dict[str, Any]:
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     store = TraceStore(settings.db_path)
+    catalog = load_catalog()
     auth = _require_auth(settings)
 
     app = FastAPI(
@@ -560,12 +562,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def router_policies() -> dict[str, Any]:
         return {"object": "router.policies", "data": DEFAULT_ROUTE_POLICIES}
 
+    @app.get("/v1/router/catalog", dependencies=[Depends(auth)])
+    def router_catalog() -> dict[str, Any]:
+        return {"object": "router.catalog", "models": catalog.list_models(), "capabilities": catalog.list_capabilities(), "metadata": catalog.get_metadata()}
+
     @app.post("/v1/router/plan", dependencies=[Depends(auth)])
     def router_plan(request: RouterPlanRequest, response: Response) -> dict[str, Any]:
         subscriptions = store.list_subscriptions()
         readiness = {item["id"]: _probe_subscription(item) for item in subscriptions if item["enabled"]}
         plan = plan_route(
             subscriptions=subscriptions,
+            catalog=catalog,
             prompt=request.prompt,
             task_type=request.task_type,
             mode=request.mode,
@@ -573,7 +580,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         run_id = store.save_trace(
             endpoint="/v1/router/plan",
-            model=plan.get("selected_worker", {}).get("alias") or "router-policy",
+            model=plan.get("selected_worker", {}).get("model_id") or "router-policy",
             input_payload=request.model_dump(),
             output_payload=plan,
             metadata={

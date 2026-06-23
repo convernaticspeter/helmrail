@@ -16,6 +16,7 @@ This repository currently contains a functional API prototype:
 - `GET /setup`
 - `GET /v1/provider-presets`
 - `GET /v1/router/policies`
+- `GET /v1/router/catalog`
 - `POST /v1/router/plan`
 - `GET /v1/codex/status`
 - `POST /v1/codex/run`
@@ -112,22 +113,48 @@ Kimi coding-plan keys with the `sk-kimi-` prefix use `https://api.kimi.com/codin
 
 ## Router planning
 
-Helmrail exposes a deterministic plan-only router before it executes multi-worker orchestration. This is the first Fugu-style layer: inspect the task, choose a workflow shape, and explain which connected workers would be used.
+Helmrail uses a **model-level** deterministic router. Policies reference real model IDs (e.g. `gpt-5.5`, `claude-opus-4.6`), not provider aliases. Helmrail then resolves each model to the best available subscription:
+
+1. **OpenRouter** (priority 0) — one key, many models
+2. **Special connectors** (priority 1) — Codex CLI, Oracle browser, Kimi Coding Plan
+3. **Direct API** (priority 2) — provider-specific keys (Z.ai, Anthropic, etc.)
+
+### Model catalog
+
+The model catalog (`data/model_catalog.yaml`) defines capabilities grounded in 2026 benchmarks:
+
+| Model | Provider | Capabilities | Top Benchmark |
+|---|---|---|---|
+| `gpt-5.5` | OpenAI | coding, reasoning, general, math | DeepSWE #1 (69.2%), LiveBench #1 (80.71) |
+| `gpt-5.5-pro` | OpenAI | reasoning, coding | ARC-AGI-1 #1 (96.5%) |
+| `claude-opus-4.6` | Anthropic | reasoning, general, creative_writing, coding, agentic | SWE-bench #4 (75.6%), Arena #4 |
+| `claude-sonnet-4.6` | Anthropic | general, coding | Cost-effective all-rounder |
+| `gemini-3-pro` | Google | general, creative_writing | Arena Creative Writing #4 |
+| `glm-5.2` | ZHIPU | coding, general | LiveBench Coding 79.65 |
+| `kimi-k2.7-code` | Moonshot | coding | Kimi Coding Plan specialist |
+
+### Policy modes
 
 ```text
 POST /v1/router/plan
 {"prompt":"Fix a failing Python test and produce a patch."}
 ```
 
-Current built-in policy modes:
+| Task type | Mode | Primary | Fallback | Verifier |
+|---|---|---|---|---|
+| `default` | `direct` | `gpt-5.5` | `claude-opus-4.6`, `gemini-3-pro` | — |
+| `coding` | `worker_verifier` | `gpt-5.5` | `kimi-k2.7-code` | `claude-opus-4.6` |
+| `reasoning` | `worker_verifier` | `gpt-5.5-pro` | `claude-opus-4.6` | `gpt-5.5` |
+| `creative_writing` | `direct` | `claude-opus-4.6` | `gemini-3-pro`, `gpt-5.5` | — |
+| `fast` | `race` | `glm-5.2`, `kimi-k2.7-code`, `claude-sonnet-4.6` | — | — |
+| `cheap` | `direct` | `glm-5.2` | `kimi-k2.7-code`, `claude-sonnet-4.6` | — |
+| `high_confidence` | `compare` | `gpt-5.5`, `claude-opus-4.6`, `glm-5.2` | — | `gpt-5.5-pro` |
 
-| Task type | Mode | Shape |
-| --- | --- | --- |
-| `default` | `direct` | OpenRouter primary, direct API fallbacks |
-| `fast` | `race` | Z.ai, Kimi, and OpenRouter candidates |
-| `cheap` | `direct` | direct coding-plan API first |
-| `coding` | `worker_verifier` | Codex worker, Kimi fallback, OpenRouter verifier |
-| `high_confidence` | `compare` | independent candidates plus synthesizer |
+### Endpoints
+
+- `GET /v1/router/catalog` — list models, capabilities, and benchmark sources
+- `GET /v1/router/policies` — list routing policies (model-level)
+- `POST /v1/router/plan` — get a routing plan for a prompt
 
 ## Test through Hermes
 

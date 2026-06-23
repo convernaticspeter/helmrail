@@ -1,0 +1,156 @@
+# Helmrail Model Registry - Phase 1
+# Benchmark-grounded capability tags (June 2026)
+
+metadata:
+  version: 1
+  description: Benchmark-validated model capabilities
+  sources:
+    - name: DeepSWE
+      url: https://phly95.github.io/deepswe-interactive-report/
+      date: 2026-06
+    - name: SWE-bench Verified
+      url: https://www.swebench.com/
+      date: 2026-02-17
+    - name: Chatbot Arena Text
+      url: https://lmarena.ai/leaderboard
+      date: 2026-06
+    - name: Chatbot Arena Creative Writing
+      url: https://arena.ai/leaderboard/text/creative-writing
+      date: 2026-06
+    - name: Vision Arena
+      url: https://arena.ai/leaderboard/vision
+      date: 2026-06
+    - name: LiveBench Global
+      url: https://livebench.ai/
+      date: 2026-01-08
+    - name: ARC-AGI
+      url: https://arcprize.org/leaderboard
+      date: 2026-04
+    - name: Aider Polyglot
+      url: https://aider.chat/docs/leaderboards/
+      date: 2025-06
+
+models:
+  gpt-5.5:
+    provider: openai
+    capabilities:
+      - coding
+      - reasoning
+      - general
+      - math
+    benchmarks:
+      deepswe:
+        score: 0.692
+        rank: 1
+        source: DeepSWE
+      livebench_global:
+        score: 80.71
+        rank: 1
+        source: LiveBench Global
+      livebench_reasoning:
+        score: 87.71
+        source: LiveBench Global
+      livebench_coding:
+        score: 82.47
+        source: LiveBench Global
+      livebench_math:
+        score: 96.32
+        source: LiveBench Global
+    notes: Top performer across coding, reasoning, and general tasks. DeepSWE #1.
+    
+  gpt-5.5-pro:
+    provider: openai
+    capabilities:
+      - reasoning
+      - coding
+    benchmarks:
+      arc_agi_1:
+        score: 0.965
+        rank: 1
+        source: ARC-AGI
+      arc_agi_2:
+        score: 0.846
+        rank: 1
+        source: ARC-AGI
+    notes: ARC-AGI champion. Requires oracle_browser connector (Hermes /pro command).
+    
+  claude-opus-4.6:
+    provider: anthropic
+    capabilities:
+      - reasoning
+      - general
+      - creative_writing
+      - coding
+      - agentic
+    benchmarks:
+      chatbot_arena_text:
+        elo: 1499
+        rank: 4
+        source: Chatbot Arena Text
+      chatbot_arena_creative_writing:
+        elo: 1498
+        rank: 2
+        source: Chatbot Arena Creative Writing
+      vision_arena:
+        elo: 1297
+        rank: 5
+        source: Vision Arena
+      swe_bench_verified:
+        score: 0.756
+        rank: 4
+        source: SWE-bench Verified
+    notes: Strong all-rounder, excels in creative writing and agentic tasks.
+    
+  claude-sonnet-4.6:
+    provider: anthropic
+    capabilities:
+      - general
+      - coding
+    benchmarks:
+      notes: Mid-tier Claude variant. Cost-effective for general work.
+    notes: Faster and cheaper than Opus. Good for straightforward tasks.
+    
+  gemini-3-pro:
+    provider: google
+    capabilities:
+      - general
+      - creative_writing
+    benchmarks:
+      chatbot_arena_text:
+        elo: 1486
+        rank: 7
+        source: Chatbot Arena Text
+      chatbot_arena_creative_writing:
+        elo: 1485
+        rank: 4
+        source: Chatbot Arena Creative Writing
+    notes: Competitive with Claude in general and creative tasks.
+    
+  glm-5.2:
+    provider: zhipu
+    capabilities:
+      - coding
+      - general
+    benchmarks:
+      livebench_global:
+        score: 76.24
+        rank: 7
+        source: LiveBench Global
+      livebench_coding:
+        score: 79.65
+        source: LiveBench Global
+      livebench_reasoning:
+        score: 83.92
+        source: LiveBench Global
+      livebench_math:
+        score: 89.78
+        source: LiveBench Global
+    notes: Strong coding capability via LiveBench (79.65). Very cost-effective via Z.ai.
+    
+  kimi-k2.7-code:
+    provider: moonshot
+    capabilities:
+      - coding
+    benchmarks:
+      notes: Specialized coding model from Kimi Coding Plan subscription.
+    notes: Purpose-built for code. Available via Kimi Coding Plan API.

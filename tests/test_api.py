@@ -211,9 +211,11 @@ def test_subscription_endpoints_require_auth_when_enabled(tmp_path):
     assert c.get("/v1/codex/status").status_code == 401
     assert c.get("/v1/oracle/status").status_code == 401
     assert c.get("/v1/router/policies").status_code == 401
+    assert c.get("/v1/router/catalog").status_code == 401
     assert c.post("/v1/router/plan", json={"prompt": "hi"}).status_code == 401
     assert c.get("/v1/subscriptions", headers={"Authorization": "Bearer secret"}).status_code == 200
     assert c.get("/v1/router/policies", headers={"Authorization": "Bearer secret"}).status_code == 200
+    assert c.get("/v1/router/catalog", headers={"Authorization": "Bearer secret"}).status_code == 200
 
 
 def test_router_plan_selects_coding_worker_verifier_flow(tmp_path, monkeypatch):
@@ -280,11 +282,15 @@ def test_router_plan_selects_coding_worker_verifier_flow(tmp_path, monkeypatch):
     assert body["task_type"] == "coding"
     assert body["mode"] == "worker_verifier"
     assert body["ready"] is True
-    assert body["selected_worker"]["alias"] == "helmrail-codex"
-    assert body["selected_worker"]["connector_type"] == "codex_cli"
-    workers = {(worker["role"], worker["alias"]): worker for worker in body["workers"]}
-    assert workers[("fallback_worker", "helmrail-kimi")]["upstream_model"] == "kimi-k2.7-code"
-    assert workers[("verifier", "helmrail-openrouter")]["upstream_model"] == "openrouter/auto"
+    # Policies refer model IDs, not subscription aliases
+    assert body["selected_worker"]["model_id"] == "gpt-5.5"
+    # OpenRouter should be preferred (priority 0) over Codex (priority 1)
+    assert body["selected_worker"]["route_via"] == "openrouter"
+    workers = {(worker["role"], worker["model_id"]): worker for worker in body["workers"]}
+    # kimi-k2.7-code resolved via OpenRouter (priority 0), so upstream is prefixed
+    assert workers[("fallback_worker", "kimi-k2.7-code")]["route_via"] == "openrouter"
+    assert "kimi-k2.7-code" in workers[("fallback_worker", "kimi-k2.7-code")]["upstream_model"]
+    assert workers[("verifier", "claude-opus-4.6")]["route_via"] == "openrouter"
     assert plan.headers["X-Helmrail-Trace-Id"] == body["trace_id"]
 
 
@@ -292,6 +298,7 @@ def test_router_plan_fast_mode_races_ready_api_workers(tmp_path, monkeypatch):
     c = client(tmp_path)
     monkeypatch.setenv("TEST_KIMI_KEY", "local-test-key")
     monkeypatch.setenv("TEST_ZAI_KEY", "local-test-key")
+    monkeypatch.setenv("TEST_OPENROUTER_KEY", "local-test-key")
     for payload in [
         {
             "provider": "kimi",
@@ -311,6 +318,15 @@ def test_router_plan_fast_mode_races_ready_api_workers(tmp_path, monkeypatch):
             "model_aliases": ["helmrail-zai"],
             "metadata": {"api_style": "openai_compatible", "upstream_model": "glm-5.2"},
         },
+        {
+            "provider": "openrouter",
+            "account_label": "OpenRouter API",
+            "connector_type": "api_key_env",
+            "credential_ref": "TEST_OPENROUTER_KEY",
+            "base_url": "https://openrouter.ai/api/v1",
+            "model_aliases": ["helmrail-openrouter"],
+            "metadata": {"api_style": "openai_compatible", "upstream_model": "openrouter/auto"},
+        },
     ]:
         assert c.post("/v1/subscriptions", json=payload).status_code == 200
 
@@ -319,12 +335,10 @@ def test_router_plan_fast_mode_races_ready_api_workers(tmp_path, monkeypatch):
     body = plan.json()
     assert body["task_type"] == "fast"
     assert body["mode"] == "race"
-    assert body["selected_worker"]["alias"] == "helmrail-zai"
-    assert [worker["alias"] for worker in body["workers"] if worker["role"] == "candidate"] == [
-        "helmrail-zai",
-        "helmrail-kimi",
-        "helmrail-openrouter",
-    ]
+    # Candidates are model IDs, not aliases
+    assert body["selected_worker"]["model_id"] == "glm-5.2"
+    candidate_models = [worker["model_id"] for worker in body["workers"] if worker["role"] == "candidate"]
+    assert candidate_models == ["glm-5.2", "kimi-k2.7-code", "claude-sonnet-4.6"]
 
 
 def test_chat_completion_creates_trace_and_contribution_preview(tmp_path):
