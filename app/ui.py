@@ -33,17 +33,23 @@ def setup_page() -> str:
         .pill { display:inline-flex; width:fit-content; padding:5px 9px; border-radius:999px; background:rgba(255,255,255,.10); color:#ccd5ed; font-size:12px; font-weight:850; }
         .ready { background:rgba(73,255,170,.12); color:#83ffc2; } .warn { background:rgba(255,208,87,.12); color:#ffd057; }
         .actions { display:flex; flex-wrap:wrap; gap:8px; } pre { white-space:pre-wrap; overflow-wrap:anywhere; background:rgba(0,0,0,.36); border-radius:14px; padding:12px; color:#dfe7fb; max-height:360px; overflow:auto; }
-        .two { display:grid; grid-template-columns:1fr 1fr; gap:12px; } .three { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
-        .note { border-left:3px solid #ffd057; padding-left:12px; color:#c8d2ea; } .hidden { display:none; }
-        @media (max-width: 920px) { .grid,.two,.three { grid-template-columns:1fr; } }
+        .two { display:grid; grid-template-columns:1fr 1fr; gap:12px; } .hidden { display:none !important; }
+        .note { border-left:3px solid #ffd057; padding-left:12px; color:#c8d2ea; }
+        .policy { display:grid; gap:6px; margin: 12px 0 18px; padding:14px; border-radius:16px; background:rgba(255,208,87,.08); border:1px solid rgba(255,208,87,.18); color:#dbe4fa; }
+        @media (max-width: 920px) { .grid,.two { grid-template-columns:1fr; } }
       </style>
     </head>
     <body>
       <main>
         <a href="/">← Helmrail</a>
         <div class="eyebrow">Local-only control panel</div>
-        <h1>Connect providers. Run Codex-style coding tasks.</h1>
-        <p class="note">Helmrail is currently bound to <code>127.0.0.1</code>. Provider API keys are stored locally and returned only as masked previews. For production-hardening, use OS keychain/encrypted storage next.</p>
+        <h1>Connect subscriptions without breaking provider rules.</h1>
+        <div class="policy">
+          <strong>Provider policy</strong>
+          <span>OpenAI subscriptions use the local Codex CLI/OAuth path — no OpenAI key field.</span>
+          <span>Anthropic and Google consumer subscriptions are not bridged; only their official API products get API-key connectors.</span>
+          <span>GPT-5.5 Pro runs through the existing Hermes /pro Oracle browser connector.</span>
+        </div>
 
         <div class="toolbar card">
           <label>Local admin key
@@ -59,69 +65,86 @@ def setup_page() -> str:
               <h2>Connected providers</h2>
               <div id="subscriptions" class="cards">Loading…</div>
             </div>
-            <div class="card">
-              <h2>Codex workbench</h2>
-              <p>Use an OpenAI/OpenAI-compatible provider as the coding backend. If the real Codex CLI is installed later, Helmrail detects it in status.</p>
+            <div class="card" id="codex">
+              <h2>Codex CLI / API coding workbench</h2>
+              <p>OpenAI subscription tasks route through the local Codex CLI. Z.ai, Kimi, MiniMax and OpenRouter can run through their OpenAI-compatible APIs.</p>
               <div class="two">
                 <label>Provider
                   <select id="codexSubscription"></select>
                 </label>
                 <label>Model
-                  <input id="codexModel" placeholder="e.g. your Codex/OpenAI model name">
+                  <input id="codexModel" placeholder="gpt-5.5, glm-5.2, kimi-k2.7-code, MiniMax-M3">
                 </label>
               </div>
               <label>Task
                 <textarea id="codexPrompt" placeholder="Ask for a code change, review, refactor plan, or patch guidance"></textarea>
               </label>
-              <label><input id="dryRun" type="checkbox" checked style="width:auto"> Dry-run first (no provider call)</label>
-              <div class="actions"><button id="runCodex">Run Codex task</button><button class="secondary" id="codexStatusBtn">Codex status</button></div>
+              <label><input id="dryRun" type="checkbox" checked style="width:auto"> Dry-run first (no Codex/API call)</label>
+              <div class="actions"><button id="runCodex">Run coding task</button><button class="secondary" id="codexStatusBtn">Codex status</button></div>
               <pre id="codexOutput"></pre>
+            </div>
+            <div class="card" id="oracle">
+              <h2>GPT-5.5 Pro Oracle</h2>
+              <p>Use the Hermes /pro Oracle browser path for ChatGPT Pro questions. This does not use an API key.</p>
+              <label>Model
+                <input id="oracleModel" value="gpt-5.5-pro">
+              </label>
+              <label>Question
+                <textarea id="oraclePrompt" placeholder="Ask GPT-5.5 Pro for a second opinion"></textarea>
+              </label>
+              <div class="two">
+                <label>Wait seconds
+                  <input id="oracleWait" type="number" min="0" max="900" value="45">
+                </label>
+                <label><input id="oracleDryRun" type="checkbox" checked style="width:auto"> Dry-run first</label>
+              </div>
+              <div class="actions"><button id="runOracle">Run Oracle</button><button class="secondary" id="oracleStatusBtn">Oracle status</button></div>
+              <pre id="oracleOutput"></pre>
             </div>
           </section>
 
           <aside class="card">
-            <h2>Add API key / subscription</h2>
+            <h2>Add connector</h2>
             <form id="form">
               <label>Provider preset
                 <select id="preset" name="preset"></select>
               </label>
               <div class="two">
                 <label>Provider slug
-                  <input name="provider" required placeholder="openai">
+                  <input name="provider" required placeholder="zai">
                 </label>
                 <label>Connector type
                   <select name="connector_type" required>
-                    <option value="api_key_local">Paste API key locally</option>
+                    <option value="codex_cli">Codex CLI / OpenAI subscription</option>
+                    <option value="oracle_browser">Oracle browser / ChatGPT Pro</option>
+                    <option value="api_key_local">API key stored locally</option>
                     <option value="api_key_env">API key from env var</option>
-                    <option value="codex_cli">Codex CLI on this computer</option>
-                    <option value="browser_profile">Browser profile</option>
-                    <option value="oauth">OAuth placeholder</option>
                     <option value="manual">Manual / not automated yet</option>
                   </select>
                 </label>
               </div>
               <label>Account label
-                <input name="account_label" placeholder="Peter · OpenAI Codex" required>
+                <input name="account_label" placeholder="Z.ai Coding Plan" required>
               </label>
               <label>Plan / note
-                <input name="plan" placeholder="Codex, Claude Max, Gemini Advanced, OpenRouter">
+                <input name="plan" placeholder="Coding plan, API, ChatGPT Pro">
               </label>
-              <label>API key <span class="meta">stored locally, never shown back</span>
-                <input name="api_key" type="password" autocomplete="off" placeholder="sk-...">
+              <label id="apiKeyField">API key <span class="meta">API providers only; never for OpenAI subscription or Oracle</span>
+                <input name="api_key" type="password" autocomplete="off" placeholder="Provider API key">
               </label>
-              <label>Credential reference <span class="meta">env var, CLI command, browser profile, or note</span>
-                <input name="credential_ref" placeholder="OPENAI_API_KEY or codex or /path/to/profile">
+              <label id="credentialField">Credential reference <span class="meta" id="credentialHint">CLI command, env var, browser profile, or note</span>
+                <input name="credential_ref" placeholder="codex or PROVIDER_API_KEY">
               </label>
-              <label>Base URL
-                <input name="base_url" placeholder="https://api.openai.com/v1">
+              <label id="baseUrlField">Base URL
+                <input name="base_url" placeholder="https://api.moonshot.ai/v1">
               </label>
               <label>Model aliases
-                <input name="model_aliases" placeholder="codex, gpt-4.1, provider/model-name">
+                <input name="model_aliases" placeholder="glm-5.2, kimi-k2.7-code, MiniMax-M3">
               </label>
               <label>Metadata JSON
                 <textarea name="metadata" placeholder='{"api_style":"openai_compatible"}'></textarea>
               </label>
-              <button type="submit">Save provider</button>
+              <button type="submit">Save connector</button>
             </form>
             <pre id="status"></pre>
           </aside>
@@ -132,6 +155,7 @@ def setup_page() -> str:
         const statusBox = document.getElementById('status');
         const list = document.getElementById('subscriptions');
         const codexOutput = document.getElementById('codexOutput');
+        const oracleOutput = document.getElementById('oracleOutput');
         let presets = [];
         let subs = [];
         keyInput.value = localStorage.getItem('helmrail_api_key') || '';
@@ -141,12 +165,14 @@ def setup_page() -> str:
         async function api(path, options={}) { const res = await fetch(path, {...options, headers:{...headers(), ...(options.headers || {})}}); const body = await res.json().catch(()=>({})); if (!res.ok) throw new Error((body && body.detail) || res.statusText); return body; }
         function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
         function csv(value) { return Array.isArray(value) ? value.join(', ') : String(value || ''); }
+        function apiStyleOf(item) { return (item.metadata && item.metadata.api_style) || item.api_style || ''; }
         async function loadPresets() {
           const body = await fetch('/v1/provider-presets').then(r => r.json());
           presets = body.data || [];
           const select = document.getElementById('preset');
           select.innerHTML = presets.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.label)}</option>`).join('');
           select.onchange = applyPreset;
+          document.getElementById('form').connector_type.onchange = updateFieldVisibility;
           applyPreset();
         }
         function applyPreset() {
@@ -159,8 +185,21 @@ def setup_page() -> str:
           form.account_label.value = p.label || '';
           form.base_url.value = p.base_url || '';
           form.model_aliases.value = csv(p.model_aliases || []);
-          form.metadata.value = JSON.stringify({api_style:p.api_style || 'openai_compatible', preset:p.id, help:p.help || ''}, null, 2);
-          form.credential_ref.value = p.connector_type === 'api_key_env' ? String(p.provider || '').toUpperCase() + '_API_KEY' : '';
+          form.metadata.value = JSON.stringify({api_style:p.api_style || 'openai_compatible', preset:p.id, key_policy:p.key_policy || 'api_key_allowed', help:p.help || ''}, null, 2);
+          form.credential_ref.value = p.credential_ref || (p.connector_type === 'api_key_env' ? String(p.provider || '').toUpperCase() + '_API_KEY' : '');
+          form.api_key.value = '';
+          updateFieldVisibility();
+        }
+        function updateFieldVisibility() {
+          const form = document.getElementById('form');
+          const connector = form.connector_type.value;
+          document.getElementById('apiKeyField').classList.toggle('hidden', connector !== 'api_key_local');
+          document.getElementById('baseUrlField').classList.toggle('hidden', !['api_key_local','api_key_env'].includes(connector));
+          const hint = document.getElementById('credentialHint');
+          if (connector === 'codex_cli') hint.textContent = 'Codex command, usually codex';
+          else if (connector === 'oracle_browser') hint.textContent = 'Oracle browser profile path';
+          else if (connector === 'api_key_env') hint.textContent = 'Environment variable name, e.g. KIMI_API_KEY';
+          else hint.textContent = 'Optional reference/note';
         }
         async function loadSubs() {
           try {
@@ -170,22 +209,25 @@ def setup_page() -> str:
           } catch (err) { list.innerHTML = '<p class="warn">'+escapeHtml(err.message)+'</p>'; }
         }
         function renderSubs() {
-          if (!subs.length) { list.innerHTML = '<p>No provider keys linked yet. Start with OpenAI / Codex on the right.</p>'; return; }
-          list.innerHTML = subs.map(item => `
-            <article class="sub" data-id="${escapeHtml(item.id)}">
+          if (!subs.length) { list.innerHTML = '<p>No connectors yet. Start with OpenAI Subscription / Codex CLI, GPT-5.5 Pro / Oracle, or an API provider.</p>'; return; }
+          list.innerHTML = subs.map(item => {
+            const secret = ['codex_cli','oracle_browser','manual'].includes(item.connector_type) ? 'not used' : (item.has_secret ? escapeHtml(item.secret_preview) : 'none');
+            return `<article class="sub" data-id="${escapeHtml(item.id)}">
               <div class="sub-head"><div><div class="name">${escapeHtml(item.provider)} · ${escapeHtml(item.account_label)}</div><div class="meta">${escapeHtml(item.plan || 'no plan')} · ${escapeHtml(item.connector_type)} · ${escapeHtml(item.base_url || item.credential_ref || 'no endpoint/ref')}</div></div><span class="pill ${item.enabled ? 'ready':'warn'}">${item.enabled ? 'enabled':'disabled'}</span></div>
-              <div class="meta">Secret: ${item.has_secret ? escapeHtml(item.secret_preview) : 'none'} · Models: ${(item.model_aliases || []).map(escapeHtml).join(', ') || 'none'}</div>
+              <div class="meta">Secret: ${secret} · Models: ${(item.model_aliases || []).map(escapeHtml).join(', ') || 'none'}</div>
               <div class="actions"><button class="secondary" onclick="probe('${item.id}')">Probe</button><button class="danger" onclick="removeSub('${item.id}')">Delete</button></div>
-            </article>`).join('');
+            </article>`;
+          }).join('');
         }
         function renderCodexOptions() {
           const select = document.getElementById('codexSubscription');
-          select.innerHTML = subs.map(s => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.provider)} · ${escapeHtml(s.account_label)}</option>`).join('');
-          const selected = subs.find(s => s.id === select.value) || subs[0];
+          const codingSubs = subs.filter(s => s.connector_type === 'codex_cli' || apiStyleOf(s) === 'openai_compatible');
+          select.innerHTML = codingSubs.map(s => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.provider)} · ${escapeHtml(s.account_label)}</option>`).join('');
+          const selected = codingSubs.find(s => s.id === select.value) || codingSubs[0];
           if (selected && !document.getElementById('codexModel').value) document.getElementById('codexModel').value = (selected.model_aliases || [])[0] || '';
         }
         async function probe(id) { try { statusBox.textContent = JSON.stringify(await api('/v1/subscriptions/'+id+'/probe',{method:'POST'}), null, 2); await loadSubs(); } catch (err) { statusBox.textContent = err.message; } }
-        async function removeSub(id) { if (!confirm('Delete this provider?')) return; try { await api('/v1/subscriptions/'+id,{method:'DELETE'}); await loadSubs(); } catch (err) { statusBox.textContent = err.message; } }
+        async function removeSub(id) { if (!confirm('Delete this connector?')) return; try { await api('/v1/subscriptions/'+id,{method:'DELETE'}); await loadSubs(); } catch (err) { statusBox.textContent = err.message; } }
         window.probe = probe; window.removeSub = removeSub;
         document.getElementById('form').onsubmit = async (event) => {
           event.preventDefault(); const fd = new FormData(event.target); let metadata = {}; const metadataText = String(fd.get('metadata') || '').trim(); if (metadataText) metadata = JSON.parse(metadataText);
@@ -194,6 +236,8 @@ def setup_page() -> str:
         };
         document.getElementById('codexStatusBtn').onclick = async () => { try { codexOutput.textContent = JSON.stringify(await api('/v1/codex/status'), null, 2); } catch (err) { codexOutput.textContent = err.message; } };
         document.getElementById('runCodex').onclick = async () => { try { codexOutput.textContent = 'Running…'; const payload={subscription_id:document.getElementById('codexSubscription').value, model:document.getElementById('codexModel').value.trim(), prompt:document.getElementById('codexPrompt').value, dry_run:document.getElementById('dryRun').checked}; codexOutput.textContent = JSON.stringify(await api('/v1/codex/run',{method:'POST', body:JSON.stringify(payload)}), null, 2); } catch (err) { codexOutput.textContent = err.message; } };
+        document.getElementById('oracleStatusBtn').onclick = async () => { try { oracleOutput.textContent = JSON.stringify(await api('/v1/oracle/status'), null, 2); } catch (err) { oracleOutput.textContent = err.message; } };
+        document.getElementById('runOracle').onclick = async () => { try { oracleOutput.textContent = 'Running…'; const payload={model:document.getElementById('oracleModel').value.trim() || 'gpt-5.5-pro', prompt:document.getElementById('oraclePrompt').value, wait_seconds:Number(document.getElementById('oracleWait').value || 45), dry_run:document.getElementById('oracleDryRun').checked}; oracleOutput.textContent = JSON.stringify(await api('/v1/oracle/run',{method:'POST', body:JSON.stringify(payload)}), null, 2); } catch (err) { oracleOutput.textContent = err.message; } };
         async function loadAll() { await loadPresets(); await loadSubs(); }
         loadAll();
       </script>

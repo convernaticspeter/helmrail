@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,13 +13,23 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from .config import Settings
-from .connectors import api_style_for, codex_status, openai_compatible_chat, public_presets, resolve_secret
+from .connectors import (
+    api_style_for,
+    codex_cli_ready,
+    codex_cli_run,
+    codex_status,
+    openai_compatible_chat,
+    oracle_status,
+    pro_oracle_run,
+    public_presets,
+    resolve_secret,
+)
 from .redaction import redact_json, redact_text
 from .store import TraceStore
 from .ui import setup_page
 
 
-ConnectorType = Literal["api_key_local", "api_key_env", "browser_profile", "oauth", "codex_cli", "manual"]
+ConnectorType = Literal["api_key_local", "api_key_env", "browser_profile", "oauth", "codex_cli", "oracle_browser", "manual"]
 
 
 class ContributionPreviewRequest(BaseModel):
@@ -66,6 +75,13 @@ class CodexRunRequest(BaseModel):
         default="You are Codex inside Helmrail. Focus on practical software engineering output: concise diagnosis, patch-ready steps, and code when useful.",
         max_length=4000,
     )
+    dry_run: bool = False
+
+
+class OracleRunRequest(BaseModel):
+    prompt: str = Field(..., min_length=1, max_length=20000)
+    model: str = Field(default="gpt-5.5-pro", max_length=200)
+    wait_seconds: int = Field(default=45, ge=0, le=900)
     dry_run: bool = False
 
 
@@ -131,11 +147,25 @@ def _probe_subscription(subscription: dict[str, Any]) -> dict[str, Any]:
         return {**base, "status": "missing_env", "message": f"Environment variable {credential_ref} is not set in this Helmrail runtime."}
 
     if connector_type == "codex_cli":
-        command = credential_ref or "codex"
-        path = shutil.which(command)
-        if path:
-            return {**base, "ok": True, "status": "ready", "message": f"Codex CLI found at {path}."}
-        return {**base, "status": "cli_not_found", "message": f"Codex CLI command not found: {command}"}
+        ready = codex_cli_ready(subscription)
+        if ready["ok"]:
+            return {**base, "ok": True, "status": "ready", "message": f"Codex CLI found at {ready['path']}."}
+        return {**base, "status": "cli_not_found", "message": f"Codex CLI command not found: {ready['command']}"}
+
+    if connector_type == "oracle_browser":
+        status = oracle_status()
+        ok = bool(status["oracle_helper_available"] and status["node24_available"] and status["oracle_cli_available"])
+        missing = [name for name, present in (
+            ("Hermes pro_oracle helper", status["oracle_helper_available"]),
+            ("Node 24", status["node24_available"]),
+            ("Oracle CLI", status["oracle_cli_available"]),
+        ) if not present]
+        return {
+            **base,
+            "ok": ok,
+            "status": "ready" if ok else "oracle_not_ready",
+            "message": "Oracle browser connector is available." if ok else "Missing: " + ", ".join(missing),
+        }
 
     if connector_type == "browser_profile":
         if not credential_ref:
@@ -298,13 +328,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 <h2>Add subscription</h2>
                 <form id="form">
                   <label>Provider
-                    <input name="provider" placeholder="openai, anthropic, google, xai" required>
+                    <input name="provider" placeholder="zai, kimi, minimax, anthropic, google, openrouter" required>
                   </label>
                   <label>Account label
-                    <input name="account_label" placeholder="Peter · ChatGPT Pro" required>
+                    <input name="account_label" placeholder="Kimi Coding Plan" required>
                   </label>
                   <label>Plan
-                    <input name="plan" placeholder="ChatGPT Pro, Claude Max, Gemini Advanced">
+                    <input name="plan" placeholder="Coding plan or official API product">
                   </label>
                   <label>Connector type
                     <select name="connector_type" required>
@@ -315,10 +345,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     </select>
                   </label>
                   <label>Credential reference
-                    <input name="credential_ref" placeholder="OPENAI_API_KEY or /data/browser-profiles/chatgpt">
+                    <input name="credential_ref" placeholder="KIMI_API_KEY or /path/to/profile">
                   </label>
                   <label>Model aliases
-                    <input name="model_aliases" placeholder="gpt-5.5-pro, claude-opus-subscription">
+                    <input name="model_aliases" placeholder="glm-5.2, kimi-k2.7-code, MiniMax-M3">
                   </label>
                   <label>Metadata JSON
                     <textarea name="metadata" placeholder='{"notes":"optional"}'></textarea>
@@ -477,18 +507,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/v1/codex/status", dependencies=[Depends(auth)])
     def codex_status_endpoint() -> dict[str, Any]:
         subscriptions = store.list_subscriptions()
-        coding_ready = [
-            {
-                "id": item["id"],
-                "provider": item["provider"],
-                "account_label": item["account_label"],
-                "api_style": api_style_for(item),
-                "models": item["model_aliases"],
-                "has_key_or_env": item.get("has_secret") or bool(resolve_secret(item, store.get_subscription_secret(item["id"]))),
-            }
-            for item in subscriptions
-            if item["enabled"] and api_style_for(item) == "openai_compatible"
-        ]
+        coding_ready = []
+        for item in subscriptions:
+            if not item["enabled"]:
+                continue
+            style = api_style_for(item)
+            if item["connector_type"] == "codex_cli":
+                ready = codex_cli_ready(item)
+                coding_ready.append(
+                    {
+                        "id": item["id"],
+                        "provider": item["provider"],
+                        "account_label": item["account_label"],
+                        "api_style": style,
+                        "connector_type": item["connector_type"],
+                        "models": item["model_aliases"],
+                        "ready": ready["ok"],
+                        "command": ready["command"],
+                        "path": ready["path"],
+                    }
+                )
+            elif style == "openai_compatible":
+                coding_ready.append(
+                    {
+                        "id": item["id"],
+                        "provider": item["provider"],
+                        "account_label": item["account_label"],
+                        "api_style": style,
+                        "connector_type": item["connector_type"],
+                        "models": item["model_aliases"],
+                        "ready": bool(resolve_secret(item, store.get_subscription_secret(item["id"]))),
+                    }
+                )
         return {"object": "codex.status", "data": {**codex_status(), "coding_providers": coding_ready}}
 
     @app.post("/v1/codex/run", dependencies=[Depends(auth)])
@@ -498,33 +548,72 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if request.subscription_id:
             subscription = store.get_subscription(request.subscription_id)
         else:
-            subscription = next((item for item in subscriptions if item["enabled"] and api_style_for(item) == "openai_compatible"), None)
+            subscription = next(
+                (
+                    item
+                    for item in subscriptions
+                    if item["enabled"] and (item["connector_type"] == "codex_cli" or api_style_for(item) == "openai_compatible")
+                ),
+                None,
+            )
         if subscription is None:
             raise HTTPException(status_code=404, detail="No matching provider subscription found")
         if not subscription["enabled"]:
             raise HTTPException(status_code=422, detail="Selected provider is disabled")
 
         model = request.model.strip() or (subscription["model_aliases"][0] if subscription["model_aliases"] else "")
+        style = api_style_for(subscription)
         route = {
             "subscription_id": subscription["id"],
             "provider": subscription["provider"],
             "account_label": subscription["account_label"],
             "connector_type": subscription["connector_type"],
-            "api_style": api_style_for(subscription),
+            "api_style": style,
             "base_url": subscription["base_url"],
             "model": model,
         }
+
+        if subscription["connector_type"] == "codex_cli":
+            ready = codex_cli_ready(subscription)
+            if request.dry_run:
+                return {
+                    "object": "codex.run",
+                    "dry_run": True,
+                    "route": {**route, "command": ready["command"], "path": ready["path"]},
+                    "ready": bool(ready["ok"] and model),
+                    "message": "Dry run only: no Codex CLI process was started.",
+                }
+            if not ready["ok"]:
+                raise HTTPException(status_code=422, detail=f"Codex CLI command not found: {ready['command']}")
+            if not model:
+                raise HTTPException(status_code=422, detail="Choose a Codex model")
+            result = codex_cli_run(subscription=subscription, model=model, prompt=request.prompt)
+            run_id = store.save_trace(
+                endpoint="/v1/codex/run",
+                model=model,
+                input_payload={"subscription_id": subscription["id"], "provider": subscription["provider"], "model": model, "prompt": request.prompt},
+                output_payload=result,
+                metadata={
+                    "router_family": "codex-cli",
+                    "workflow_shape": "single-provider",
+                    "worker_classes": ["coding"],
+                    "success_signal": "codex_cli_ok" if result.get("ok") else "codex_cli_error",
+                },
+            )
+            response.headers["X-Helmrail-Trace-Id"] = run_id
+            return {"object": "codex.run", "trace_id": run_id, "route": route, "result": result}
+
         secret = resolve_secret(subscription, store.get_subscription_secret(subscription["id"]))
         if request.dry_run:
             return {
                 "object": "codex.run",
                 "dry_run": True,
                 "route": route,
-                "ready": bool(secret) and bool(model),
+                "ready": bool(secret) and bool(model) and style == "openai_compatible",
                 "message": "Dry run only: no provider call was made.",
             }
-        if api_style_for(subscription) != "openai_compatible":
-            raise HTTPException(status_code=501, detail="Codex workbench currently runs OpenAI-compatible providers. This provider key is stored but needs a native runner.")
+        if style != "openai_compatible":
+            raise HTTPException(status_code=501, detail="Codex workbench currently runs Codex CLI or OpenAI-compatible API providers. This provider key is stored but needs a native runner.")
         if not secret:
             raise HTTPException(status_code=422, detail="Selected provider has no usable API key or env var")
         if not model:
@@ -557,6 +646,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response.headers["X-Helmrail-Trace-Id"] = run_id
         return {"object": "codex.run", "trace_id": run_id, "route": route, "result": result}
 
+    @app.get("/v1/oracle/status", dependencies=[Depends(auth)])
+    def oracle_status_endpoint() -> dict[str, Any]:
+        return {"object": "oracle.status", "data": oracle_status()}
+
+    @app.post("/v1/oracle/run", dependencies=[Depends(auth)])
+    def oracle_run(request: OracleRunRequest, response: Response) -> dict[str, Any]:
+        status = oracle_status()
+        route = {"connector_type": "oracle_browser", "provider": "chatgpt", "model": request.model, "status": status}
+        if request.dry_run:
+            ready = bool(status["oracle_helper_available"] and status["node24_available"] and status["oracle_cli_available"])
+            return {"object": "oracle.run", "dry_run": True, "route": route, "ready": ready, "message": "Dry run only: no Oracle browser run was started."}
+        result = pro_oracle_run(prompt=request.prompt, model=request.model, wait_seconds=request.wait_seconds, cwd=os.getcwd())
+        run_id = store.save_trace(
+            endpoint="/v1/oracle/run",
+            model=request.model,
+            input_payload={"model": request.model, "prompt": request.prompt, "wait_seconds": request.wait_seconds},
+            output_payload=result,
+            metadata={
+                "router_family": "oracle-browser",
+                "workflow_shape": "single-browser-session",
+                "worker_classes": ["reasoning"],
+                "success_signal": "oracle_ok" if result.get("ok") else "oracle_error",
+            },
+        )
+        response.headers["X-Helmrail-Trace-Id"] = run_id
+        return {"object": "oracle.run", "trace_id": run_id, "route": route, "result": result}
+
     @app.get("/v1/subscriptions", dependencies=[Depends(auth)])
     def list_subscriptions() -> dict[str, Any]:
         subscriptions = store.list_subscriptions()
@@ -564,14 +680,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/v1/subscriptions", dependencies=[Depends(auth)])
     def create_subscription(payload: SubscriptionCreate) -> dict[str, Any]:
+        provider = payload.provider.strip().lower()
+        api_key = payload.api_key.strip()
+        if provider == "openai" and payload.connector_type != "codex_cli":
+            raise HTTPException(status_code=422, detail="OpenAI subscriptions must be linked through the Codex CLI connector, not API-key entry.")
+        if api_key and payload.connector_type in {"codex_cli", "oracle_browser"}:
+            raise HTTPException(status_code=422, detail="This connector does not accept API keys.")
         subscription = store.create_subscription(
-            provider=payload.provider.strip().lower(),
+            provider=provider,
             account_label=payload.account_label.strip(),
             plan=payload.plan.strip(),
             connector_type=payload.connector_type,
             credential_ref=payload.credential_ref.strip(),
             base_url=payload.base_url.strip(),
-            secret_value=payload.api_key.strip(),
+            secret_value=api_key,
             enabled=payload.enabled,
             model_aliases=[alias.strip() for alias in payload.model_aliases if alias.strip()],
             metadata=payload.metadata,
@@ -592,6 +714,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             changes["secret_value"] = str(changes.pop("api_key") or "")
         if "provider" in changes and isinstance(changes["provider"], str):
             changes["provider"] = changes["provider"].strip().lower()
+        if changes.get("provider") == "openai" and changes.get("connector_type") not in {None, "codex_cli"}:
+            raise HTTPException(status_code=422, detail="OpenAI subscriptions must be linked through the Codex CLI connector, not API-key entry.")
+        if changes.get("secret_value") and changes.get("connector_type") in {"codex_cli", "oracle_browser"}:
+            raise HTTPException(status_code=422, detail="This connector does not accept API keys.")
         for key in ("account_label", "plan", "credential_ref", "base_url", "status", "secret_value"):
             if key in changes and isinstance(changes[key], str):
                 changes[key] = changes[key].strip()

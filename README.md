@@ -13,6 +13,12 @@ This repository currently contains a functional API prototype:
 - `GET /health`
 - `GET /v1/models`
 - `GET /subscriptions`
+- `GET /setup`
+- `GET /v1/provider-presets`
+- `GET /v1/codex/status`
+- `POST /v1/codex/run`
+- `GET /v1/oracle/status`
+- `POST /v1/oracle/run`
 - `GET /v1/subscriptions`
 - `POST /v1/subscriptions`
 - `GET /v1/subscriptions/{subscription_id}`
@@ -25,9 +31,9 @@ This repository currently contains a functional API prototype:
 - `GET /v1/traces/{run_id}`
 - `POST /v1/contributions/preview`
 
-The first build does not call upstream model providers yet. It proves the API surface, subscription registry, trace store, Docker deployment, and local redaction/contribution preview path.
+The local build now proves the API surface, connector registry, Codex/Oracle dry-runs, OpenAI-compatible provider calls, trace store, and local redaction/contribution preview path.
 
-## Link providers and API keys
+## Link subscriptions and API providers
 
 Open the local setup page:
 
@@ -35,48 +41,70 @@ Open the local setup page:
 http://127.0.0.1:8765/setup
 ```
 
-The setup UI is meant for normal users:
+Provider policy:
 
-1. Paste the local admin key once. It lives at `~/.hermes/secrets/helmrail-admin-api-key.txt`.
-2. Pick a provider preset such as OpenAI / Codex, Anthropic, Gemini, OpenRouter, xAI, Mistral, Groq, DeepSeek, Together, Perplexity, or Custom OpenAI-compatible.
-3. Paste the provider API key.
-4. Save. Helmrail stores the key locally and only returns a masked preview.
-5. Use the Codex workbench with an OpenAI/OpenAI-compatible provider and your chosen coding model.
+- **OpenAI subscription:** no key entry. Use `codex_cli` and log in through the local Codex CLI/OAuth flow.
+- **GPT-5.5 Pro:** use `oracle_browser`, which wraps the existing Hermes `/pro` Oracle browser connector.
+- **Anthropic / Google consumer subscriptions:** not bridged. Use official API products only.
+- **API-key providers:** Z.ai Coding Plan, Kimi Coding Plan, MiniMax Coding Plan, Anthropic API, Google Gemini API, and OpenRouter.
 
 Connector types:
 
-- `api_key_local` for a pasted local API key
-- `api_key_env` for an environment variable name such as `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`
-- `codex_cli` for a local Codex CLI command when installed
-- `browser_profile` for a local logged-in browser profile path
-- `oauth` for a future OAuth account connection
-- `manual` for a paid subscription that is registered but not automated yet
+- `codex_cli` for OpenAI subscription access through the local Codex CLI command
+- `oracle_browser` for GPT-5.5 Pro via Hermes `/pro` Oracle browser automation
+- `api_key_local` for supported API providers with a pasted local API key
+- `api_key_env` for an environment variable such as `KIMI_API_KEY` or `ANTHROPIC_API_KEY`
+- `manual` for a subscription/account that is registered but not automated yet
 
-Example API call:
+Example: link OpenAI subscription through Codex CLI, without an API key:
 
 ```bash
 curl http://127.0.0.1:8765/v1/subscriptions \
   -H 'Content-Type: application/json' \
   -d '{
     "provider":"openai",
-    "account_label":"OpenAI Codex",
-    "plan":"Codex / OpenAI API",
-    "connector_type":"api_key_local",
-    "base_url":"https://api.openai.com/v1",
-    "api_key":"sk-...",
-    "model_aliases":["codex"]
+    "account_label":"OpenAI Subscription",
+    "plan":"ChatGPT/Codex subscription",
+    "connector_type":"codex_cli",
+    "credential_ref":"codex",
+    "model_aliases":["gpt-5.5","gpt-5.4"]
   }'
 ```
 
-Dry-run a Codex route without making a provider call:
+Example: link Kimi Coding Plan via API key:
+
+```bash
+curl http://127.0.0.1:8765/v1/subscriptions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "provider":"kimi",
+    "account_label":"Kimi Coding Plan",
+    "plan":"Kimi K2.7 Code",
+    "connector_type":"api_key_local",
+    "base_url":"https://api.moonshot.ai/v1",
+    "api_key":"***",
+    "model_aliases":["kimi-k2.7-code","kimi-k2.7-code-highspeed"],
+    "metadata":{"api_style":"openai_compatible"}
+  }'
+```
+
+Dry-run a Codex route without starting Codex or making an API call:
 
 ```bash
 curl http://127.0.0.1:8765/v1/codex/run \
   -H 'Content-Type: application/json' \
-  -d '{"prompt":"Review this function","model":"codex","dry_run":true}'
+  -d '{"prompt":"Review this function","model":"gpt-5.5","dry_run":true}'
 ```
 
-Linked `model_aliases` appear in `GET /v1/models` while the subscription is enabled.
+Dry-run a GPT-5.5 Pro Oracle consult:
+
+```bash
+curl http://127.0.0.1:8765/v1/oracle/run \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"Give me a second opinion","model":"gpt-5.5-pro","dry_run":true}'
+```
+
+Linked `model_aliases` appear in `GET /v1/models` while the connector is enabled.
 
 ## Run locally
 
