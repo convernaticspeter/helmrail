@@ -1,5 +1,3 @@
-import importlib
-
 from fastapi.testclient import TestClient
 
 from app.config import Settings
@@ -9,6 +7,16 @@ from app.main import create_app
 def client(tmp_path):
     app = create_app(Settings(db_path=str(tmp_path / "helmrail-test.sqlite")))
     return TestClient(app)
+
+
+def test_root_landing_page(tmp_path):
+    c = client(tmp_path)
+    response = c.get("/")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "Helmrail API" in response.text
+    assert "/docs" in response.text
+    assert "/health" in response.text
 
 
 def test_health(tmp_path):

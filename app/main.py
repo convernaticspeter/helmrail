@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from .config import Settings
@@ -70,6 +71,50 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["*"],
     )
+
+    @app.get("/", response_class=HTMLResponse)
+    def root() -> str:
+        return f"""
+        <!doctype html>
+        <html lang="en">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>Helmrail API</title>
+          <style>
+            :root {{ color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}
+            body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; background: radial-gradient(circle at top left, #27345f, #080b15 52%, #05060a); color: #eef3ff; }}
+            main {{ width: min(760px, calc(100vw - 40px)); padding: 42px; border: 1px solid rgba(255,255,255,.14); border-radius: 28px; background: rgba(10,14,27,.72); box-shadow: 0 24px 90px rgba(0,0,0,.42); }}
+            .eyebrow {{ color: #ffd057; text-transform: uppercase; letter-spacing: .16em; font-size: 12px; font-weight: 800; }}
+            h1 {{ margin: 12px 0 14px; font-size: clamp(36px, 8vw, 72px); line-height: .92; }}
+            p {{ color: #b8c2dc; font-size: 18px; line-height: 1.6; max-width: 620px; }}
+            .status {{ display: inline-flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 999px; background: rgba(73, 255, 170, .1); color: #83ffc2; font-weight: 700; }}
+            .dot {{ width: 10px; height: 10px; border-radius: 999px; background: #4dffa6; box-shadow: 0 0 20px #4dffa6; }}
+            .links {{ display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }}
+            a {{ color: #08101f; background: #ffd057; text-decoration: none; font-weight: 800; padding: 13px 16px; border-radius: 14px; }}
+            a.secondary {{ color: #eef3ff; background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.15); }}
+            code {{ color: #ffd057; }}
+          </style>
+        </head>
+        <body>
+          <main>
+            <div class="eyebrow">Self-hosted model switchboard</div>
+            <h1>Helmrail API</h1>
+            <div class="status"><span class="dot"></span> online · v{settings.version}</div>
+            <p>
+              Functional prototype for one OpenAI-compatible gateway across model subscriptions and APIs.
+              This deployment currently proves routing surface, local traces, and contribution preview plumbing.
+            </p>
+            <p>Base URL: <code>https://helmrail.convernatics.eu</code></p>
+            <div class="links">
+              <a href="/docs">OpenAPI Docs</a>
+              <a class="secondary" href="/health">Health</a>
+              <a class="secondary" href="/v1/models">Models</a>
+            </div>
+          </main>
+        </body>
+        </html>
+        """
 
     @app.get("/health")
     def health() -> dict[str, Any]:
