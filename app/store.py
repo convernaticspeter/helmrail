@@ -12,6 +12,14 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _mask_secret(secret: str) -> str:
+    if not secret:
+        return ""
+    if len(secret) <= 10:
+        return "••••"
+    return f"{secret[:4]}…{secret[-4:]}"
+
+
 class TraceStore:
     def __init__(self, db_path: str) -> None:
         self.db_path = db_path
@@ -23,6 +31,11 @@ class TraceStore:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
+
+    def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+        columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
 
     def _init_db(self) -> None:
         with self._connect() as conn:
@@ -50,6 +63,8 @@ class TraceStore:
                     plan TEXT NOT NULL,
                     connector_type TEXT NOT NULL,
                     credential_ref TEXT NOT NULL,
+                    base_url TEXT NOT NULL DEFAULT '',
+                    secret_value TEXT NOT NULL DEFAULT '',
                     enabled INTEGER NOT NULL,
                     status TEXT NOT NULL,
                     model_aliases_json TEXT NOT NULL,
@@ -57,6 +72,8 @@ class TraceStore:
                 )
                 """
             )
+            self._ensure_column(conn, "subscriptions", "base_url", "base_url TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(conn, "subscriptions", "secret_value", "secret_value TEXT NOT NULL DEFAULT ''")
             conn.commit()
 
     def save_trace(
@@ -130,6 +147,8 @@ class TraceStore:
         plan: str = "",
         connector_type: str,
         credential_ref: str = "",
+        base_url: str = "",
+        secret_value: str = "",
         enabled: bool = True,
         status: str = "configured",
         model_aliases: list[str] | None = None,
@@ -142,9 +161,9 @@ class TraceStore:
                 """
                 INSERT INTO subscriptions (
                     id, created_at, updated_at, provider, account_label, plan,
-                    connector_type, credential_ref, enabled, status,
-                    model_aliases_json, metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    connector_type, credential_ref, base_url, secret_value,
+                    enabled, status, model_aliases_json, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     subscription_id,
@@ -155,6 +174,8 @@ class TraceStore:
                     plan,
                     connector_type,
                     credential_ref,
+                    base_url,
+                    secret_value,
                     1 if enabled else 0,
                     status,
                     json.dumps(model_aliases or [], ensure_ascii=False),
@@ -183,6 +204,11 @@ class TraceStore:
             return None
         return self._subscription_from_row(row)
 
+    def get_subscription_secret(self, subscription_id: str) -> str:
+        with self._connect() as conn:
+            row = conn.execute("SELECT secret_value FROM subscriptions WHERE id = ?", (subscription_id,)).fetchone()
+        return "" if row is None else str(row["secret_value"] or "")
+
     def update_subscription(self, subscription_id: str, changes: dict[str, Any]) -> dict[str, Any] | None:
         allowed = {
             "provider",
@@ -190,6 +216,8 @@ class TraceStore:
             "plan",
             "connector_type",
             "credential_ref",
+            "base_url",
+            "secret_value",
             "enabled",
             "status",
             "model_aliases",
@@ -228,6 +256,7 @@ class TraceStore:
         return cursor.rowcount > 0
 
     def _subscription_from_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        secret = str(row["secret_value"] or "")
         return {
             "id": row["id"],
             "created_at": row["created_at"],
@@ -237,6 +266,9 @@ class TraceStore:
             "plan": row["plan"],
             "connector_type": row["connector_type"],
             "credential_ref": row["credential_ref"],
+            "base_url": row["base_url"],
+            "has_secret": bool(secret),
+            "secret_preview": _mask_secret(secret),
             "enabled": bool(row["enabled"]),
             "status": row["status"],
             "model_aliases": json.loads(row["model_aliases_json"]),

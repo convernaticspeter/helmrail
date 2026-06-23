@@ -27,34 +27,53 @@ This repository currently contains a functional API prototype:
 
 The first build does not call upstream model providers yet. It proves the API surface, subscription registry, trace store, Docker deployment, and local redaction/contribution preview path.
 
-## Link subscriptions
+## Link providers and API keys
 
-Open `/subscriptions` in a browser or use the API directly. Helmrail stores connector references, not raw secrets. Use:
+Open the local setup page:
 
+```text
+http://127.0.0.1:8765/setup
+```
+
+The setup UI is meant for normal users:
+
+1. Paste the local admin key once. It lives at `~/.hermes/secrets/helmrail-admin-api-key.txt`.
+2. Pick a provider preset such as OpenAI / Codex, Anthropic, Gemini, OpenRouter, xAI, Mistral, Groq, DeepSeek, Together, Perplexity, or Custom OpenAI-compatible.
+3. Paste the provider API key.
+4. Save. Helmrail stores the key locally and only returns a masked preview.
+5. Use the Codex workbench with an OpenAI/OpenAI-compatible provider and your chosen coding model.
+
+Connector types:
+
+- `api_key_local` for a pasted local API key
 - `api_key_env` for an environment variable name such as `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`
+- `codex_cli` for a local Codex CLI command when installed
 - `browser_profile` for a local logged-in browser profile path
-- `oauth` for an OAuth account placeholder/status
+- `oauth` for a future OAuth account connection
 - `manual` for a paid subscription that is registered but not automated yet
 
-Example:
+Example API call:
 
 ```bash
-curl http://localhost:8000/v1/subscriptions \
+curl http://127.0.0.1:8765/v1/subscriptions \
   -H 'Content-Type: application/json' \
   -d '{
     "provider":"openai",
-    "account_label":"Peter ChatGPT Pro",
-    "plan":"ChatGPT Pro",
-    "connector_type":"api_key_env",
-    "credential_ref":"OPENAI_API_KEY",
-    "model_aliases":["gpt-5.5-pro"]
+    "account_label":"OpenAI Codex",
+    "plan":"Codex / OpenAI API",
+    "connector_type":"api_key_local",
+    "base_url":"https://api.openai.com/v1",
+    "api_key":"sk-...",
+    "model_aliases":["codex"]
   }'
 ```
 
-Probe the connector reference:
+Dry-run a Codex route without making a provider call:
 
 ```bash
-curl -X POST http://localhost:8000/v1/subscriptions/sub_.../probe
+curl http://127.0.0.1:8765/v1/codex/run \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"Review this function","model":"codex","dry_run":true}'
 ```
 
 Linked `model_aliases` appear in `GET /v1/models` while the subscription is enabled.

@@ -15,7 +15,7 @@ def test_root_landing_page(tmp_path):
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
     assert "Helmrail API" in response.text
-    assert "/docs" in response.text
+    assert "/setup" in response.text
     assert "/health" in response.text
 
 
@@ -43,6 +43,18 @@ def test_subscriptions_page(tmp_path):
     assert response.status_code == 200
     assert "Subscriptions" in response.text
     assert "/v1/subscriptions" in response.text
+
+
+def test_setup_page_and_provider_presets(tmp_path):
+    c = client(tmp_path)
+    response = c.get("/setup")
+    assert response.status_code == 200
+    assert "OpenAI / Codex" in response.text
+    presets = c.get("/v1/provider-presets")
+    assert presets.status_code == 200
+    labels = [preset["label"] for preset in presets.json()["data"]]
+    assert "OpenAI / Codex" in labels
+    assert "Anthropic Claude" in labels
 
 
 def test_subscription_registry_crud_and_model_alias(tmp_path, monkeypatch):
@@ -83,11 +95,49 @@ def test_subscription_registry_crud_and_model_alias(tmp_path, monkeypatch):
     assert c.get("/v1/subscriptions").json()["data"] == []
 
 
+def test_local_api_key_is_masked_and_codex_dry_run_routes(tmp_path):
+    c = client(tmp_path)
+    created = c.post(
+        "/v1/subscriptions",
+        json={
+            "provider": "openai",
+            "account_label": "OpenAI Codex",
+            "plan": "Codex",
+            "connector_type": "api_key_local",
+            "base_url": "https://api.openai.com/v1",
+            "api_key": "sk-test-secret-value",
+            "model_aliases": ["codex-test-model"],
+            "metadata": {"api_style": "openai_compatible"},
+        },
+    )
+    assert created.status_code == 200
+    data = created.json()["data"]
+    assert data["has_secret"] is True
+    assert data["secret_preview"].startswith("sk-t")
+    assert "sk-test-secret-value" not in str(created.json())
+    assert created.json()["probe"]["status"] == "ready"
+
+    status = c.get("/v1/codex/status")
+    assert status.status_code == 200
+    assert status.json()["data"]["coding_providers"][0]["provider"] == "openai"
+
+    dry = c.post(
+        "/v1/codex/run",
+        json={"subscription_id": data["id"], "model": "codex-test-model", "prompt": "review this", "dry_run": True},
+    )
+    assert dry.status_code == 200
+    assert dry.json()["dry_run"] is True
+    assert dry.json()["ready"] is True
+    assert dry.json()["route"]["model"] == "codex-test-model"
+
+
 def test_subscription_endpoints_require_auth_when_enabled(tmp_path):
     app = create_app(Settings(db_path=str(tmp_path / "subscriptions-auth.sqlite"), api_key="secret", require_auth=True))
     c = TestClient(app)
     assert c.get("/subscriptions").status_code == 200
+    assert c.get("/setup").status_code == 200
     assert c.get("/v1/subscriptions").status_code == 401
+    assert c.get("/v1/codex/status").status_code == 401
     assert c.get("/v1/subscriptions", headers={"Authorization": "Bearer secret"}).status_code == 200
 
 

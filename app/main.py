@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,11 +14,13 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from .config import Settings
+from .connectors import api_style_for, codex_status, openai_compatible_chat, public_presets, resolve_secret
 from .redaction import redact_json, redact_text
 from .store import TraceStore
+from .ui import setup_page
 
 
-ConnectorType = Literal["api_key_env", "browser_profile", "oauth", "manual"]
+ConnectorType = Literal["api_key_local", "api_key_env", "browser_profile", "oauth", "codex_cli", "manual"]
 
 
 class ContributionPreviewRequest(BaseModel):
@@ -32,8 +35,10 @@ class SubscriptionCreate(BaseModel):
     credential_ref: str = Field(
         default="",
         max_length=500,
-        description="Reference only: env var name, browser profile path, OAuth subject, or manual note. Raw secrets are not stored.",
+        description="Reference only: env var name, browser profile path, OAuth subject, CLI command, or manual note.",
     )
+    base_url: str = Field(default="", max_length=500, description="Provider API base URL, if applicable")
+    api_key: str = Field(default="", max_length=5000, description="Optional local API key. Stored locally and never returned.")
     enabled: bool = True
     model_aliases: list[str] = Field(default_factory=list, description="Model aliases exposed through Helmrail")
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -45,10 +50,23 @@ class SubscriptionUpdate(BaseModel):
     plan: str | None = Field(default=None, max_length=120)
     connector_type: ConnectorType | None = None
     credential_ref: str | None = Field(default=None, max_length=500)
+    base_url: str | None = Field(default=None, max_length=500)
+    api_key: str | None = Field(default=None, max_length=5000)
     enabled: bool | None = None
     status: str | None = Field(default=None, max_length=80)
     model_aliases: list[str] | None = None
     metadata: dict[str, Any] | None = None
+
+
+class CodexRunRequest(BaseModel):
+    prompt: str = Field(..., min_length=1, max_length=20000)
+    subscription_id: str | None = None
+    model: str = Field(default="", max_length=200)
+    system_prompt: str = Field(
+        default="You are Codex inside Helmrail. Focus on practical software engineering output: concise diagnosis, patch-ready steps, and code when useful.",
+        max_length=4000,
+    )
+    dry_run: bool = False
 
 
 def _last_user_text(messages: list[dict[str, Any]]) -> str:
@@ -100,12 +118,24 @@ def _probe_subscription(subscription: dict[str, Any]) -> dict[str, Any]:
     if not subscription["enabled"]:
         return {**base, "status": "disabled", "message": "Subscription is disabled."}
 
+    if connector_type == "api_key_local":
+        if subscription.get("has_secret"):
+            return {**base, "ok": True, "status": "ready", "message": "A local API key is stored for this provider."}
+        return {**base, "status": "missing_api_key", "message": "Paste an API key or switch to an env-var connector."}
+
     if connector_type == "api_key_env":
         if not credential_ref:
             return {**base, "status": "missing_credential_ref", "message": "Set credential_ref to the env var name that holds the API key."}
         if os.getenv(credential_ref):
             return {**base, "ok": True, "status": "ready", "message": f"Environment variable {credential_ref} is present."}
         return {**base, "status": "missing_env", "message": f"Environment variable {credential_ref} is not set in this Helmrail runtime."}
+
+    if connector_type == "codex_cli":
+        command = credential_ref or "codex"
+        path = shutil.which(command)
+        if path:
+            return {**base, "ok": True, "status": "ready", "message": f"Codex CLI found at {path}."}
+        return {**base, "status": "cli_not_found", "message": f"Codex CLI command not found: {command}"}
 
     if connector_type == "browser_profile":
         if not credential_ref:
@@ -189,10 +219,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
               Functional prototype for one OpenAI-compatible gateway across model subscriptions and APIs.
               This deployment currently proves routing surface, local traces, and contribution preview plumbing.
             </p>
-            <p>Base URL: <code>https://helmrail.convernatics.eu</code></p>
+            <p>Base URL: <code>http://127.0.0.1:8765</code></p>
             <div class="links">
-              <a href="/docs">OpenAPI Docs</a>
-              <a class="secondary" href="/subscriptions">Subscriptions</a>
+              <a href="/setup">Setup Providers</a>
+              <a class="secondary" href="/setup#codex">Codex Workbench</a>
+              <a class="secondary" href="/subscriptions">Legacy Subscriptions</a>
               <a class="secondary" href="/health">Health</a>
               <a class="secondary" href="/v1/models">Models</a>
             </div>
@@ -200,6 +231,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         </body>
         </html>
         """
+
+    @app.get("/setup", response_class=HTMLResponse)
+    def provider_setup_page() -> str:
+        return setup_page()
 
     @app.get("/subscriptions", response_class=HTMLResponse)
     def subscriptions_page() -> str:
@@ -435,6 +470,93 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 )
         return {"object": "list", "data": data}
 
+    @app.get("/v1/provider-presets")
+    def provider_presets() -> dict[str, Any]:
+        return {"object": "list", "data": public_presets()}
+
+    @app.get("/v1/codex/status", dependencies=[Depends(auth)])
+    def codex_status_endpoint() -> dict[str, Any]:
+        subscriptions = store.list_subscriptions()
+        coding_ready = [
+            {
+                "id": item["id"],
+                "provider": item["provider"],
+                "account_label": item["account_label"],
+                "api_style": api_style_for(item),
+                "models": item["model_aliases"],
+                "has_key_or_env": item.get("has_secret") or bool(resolve_secret(item, store.get_subscription_secret(item["id"]))),
+            }
+            for item in subscriptions
+            if item["enabled"] and api_style_for(item) == "openai_compatible"
+        ]
+        return {"object": "codex.status", "data": {**codex_status(), "coding_providers": coding_ready}}
+
+    @app.post("/v1/codex/run", dependencies=[Depends(auth)])
+    def codex_run(request: CodexRunRequest, response: Response) -> dict[str, Any]:
+        subscriptions = store.list_subscriptions()
+        subscription = None
+        if request.subscription_id:
+            subscription = store.get_subscription(request.subscription_id)
+        else:
+            subscription = next((item for item in subscriptions if item["enabled"] and api_style_for(item) == "openai_compatible"), None)
+        if subscription is None:
+            raise HTTPException(status_code=404, detail="No matching provider subscription found")
+        if not subscription["enabled"]:
+            raise HTTPException(status_code=422, detail="Selected provider is disabled")
+
+        model = request.model.strip() or (subscription["model_aliases"][0] if subscription["model_aliases"] else "")
+        route = {
+            "subscription_id": subscription["id"],
+            "provider": subscription["provider"],
+            "account_label": subscription["account_label"],
+            "connector_type": subscription["connector_type"],
+            "api_style": api_style_for(subscription),
+            "base_url": subscription["base_url"],
+            "model": model,
+        }
+        secret = resolve_secret(subscription, store.get_subscription_secret(subscription["id"]))
+        if request.dry_run:
+            return {
+                "object": "codex.run",
+                "dry_run": True,
+                "route": route,
+                "ready": bool(secret) and bool(model),
+                "message": "Dry run only: no provider call was made.",
+            }
+        if api_style_for(subscription) != "openai_compatible":
+            raise HTTPException(status_code=501, detail="Codex workbench currently runs OpenAI-compatible providers. This provider key is stored but needs a native runner.")
+        if not secret:
+            raise HTTPException(status_code=422, detail="Selected provider has no usable API key or env var")
+        if not model:
+            raise HTTPException(status_code=422, detail="Choose a model for this provider")
+
+        result = openai_compatible_chat(
+            subscription=subscription,
+            api_key=secret,
+            model=model,
+            prompt=request.prompt,
+            system_prompt=request.system_prompt,
+        )
+        run_id = store.save_trace(
+            endpoint="/v1/codex/run",
+            model=model,
+            input_payload={
+                "subscription_id": subscription["id"],
+                "provider": subscription["provider"],
+                "model": model,
+                "prompt": request.prompt,
+            },
+            output_payload=result,
+            metadata={
+                "router_family": "codex-workbench",
+                "workflow_shape": "single-provider",
+                "worker_classes": ["coding"],
+                "success_signal": "provider_ok" if result.get("ok") else "provider_error",
+            },
+        )
+        response.headers["X-Helmrail-Trace-Id"] = run_id
+        return {"object": "codex.run", "trace_id": run_id, "route": route, "result": result}
+
     @app.get("/v1/subscriptions", dependencies=[Depends(auth)])
     def list_subscriptions() -> dict[str, Any]:
         subscriptions = store.list_subscriptions()
@@ -448,6 +570,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             plan=payload.plan.strip(),
             connector_type=payload.connector_type,
             credential_ref=payload.credential_ref.strip(),
+            base_url=payload.base_url.strip(),
+            secret_value=payload.api_key.strip(),
             enabled=payload.enabled,
             model_aliases=[alias.strip() for alias in payload.model_aliases if alias.strip()],
             metadata=payload.metadata,
@@ -464,9 +588,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.patch("/v1/subscriptions/{subscription_id}", dependencies=[Depends(auth)])
     def update_subscription(subscription_id: str, payload: SubscriptionUpdate) -> dict[str, Any]:
         changes = payload.model_dump(exclude_unset=True)
+        if "api_key" in changes:
+            changes["secret_value"] = str(changes.pop("api_key") or "")
         if "provider" in changes and isinstance(changes["provider"], str):
             changes["provider"] = changes["provider"].strip().lower()
-        for key in ("account_label", "plan", "credential_ref", "status"):
+        for key in ("account_label", "plan", "credential_ref", "base_url", "status", "secret_value"):
             if key in changes and isinstance(changes[key], str):
                 changes[key] = changes[key].strip()
         if "model_aliases" in changes and changes["model_aliases"] is not None:
