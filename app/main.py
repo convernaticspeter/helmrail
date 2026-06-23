@@ -26,6 +26,7 @@ from .connectors import (
     resolve_secret,
 )
 from .redaction import redact_json, redact_text
+from .routing import DEFAULT_ROUTE_POLICIES, plan_route
 from .store import TraceStore
 from .ui import setup_page
 
@@ -84,6 +85,12 @@ class OracleRunRequest(BaseModel):
     model: str = Field(default="gpt-5.5-pro", max_length=200)
     wait_seconds: int = Field(default=45, ge=0, le=900)
     dry_run: bool = False
+
+
+class RouterPlanRequest(BaseModel):
+    prompt: str = Field(default="", max_length=20000)
+    task_type: str = Field(default="auto", max_length=80, description="auto, default, fast, cheap, coding, or high_confidence")
+    mode: str = Field(default="", max_length=80, description="Optional override: direct, race, compare, or worker_verifier")
 
 
 def _last_user_text(messages: list[dict[str, Any]]) -> str:
@@ -548,6 +555,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/v1/provider-presets")
     def provider_presets() -> dict[str, Any]:
         return {"object": "list", "data": public_presets()}
+
+    @app.get("/v1/router/policies", dependencies=[Depends(auth)])
+    def router_policies() -> dict[str, Any]:
+        return {"object": "router.policies", "data": DEFAULT_ROUTE_POLICIES}
+
+    @app.post("/v1/router/plan", dependencies=[Depends(auth)])
+    def router_plan(request: RouterPlanRequest, response: Response) -> dict[str, Any]:
+        subscriptions = store.list_subscriptions()
+        readiness = {item["id"]: _probe_subscription(item) for item in subscriptions if item["enabled"]}
+        plan = plan_route(
+            subscriptions=subscriptions,
+            prompt=request.prompt,
+            task_type=request.task_type,
+            mode=request.mode,
+            readiness=readiness,
+        )
+        run_id = store.save_trace(
+            endpoint="/v1/router/plan",
+            model=plan.get("selected_worker", {}).get("alias") or "router-policy",
+            input_payload=request.model_dump(),
+            output_payload=plan,
+            metadata={
+                "router_family": "deterministic-policy-router",
+                "workflow_shape": "plan-only",
+                "worker_classes": [worker.get("role", "unknown") for worker in plan.get("workers", [])],
+                "success_signal": "router_plan_ready" if plan.get("ready") else "router_plan_unready",
+                "task_type": plan.get("task_type"),
+                "mode": plan.get("mode"),
+            },
+        )
+        response.headers["X-Helmrail-Trace-Id"] = run_id
+        return {**plan, "trace_id": run_id}
 
     @app.get("/v1/codex/status", dependencies=[Depends(auth)])
     def codex_status_endpoint() -> dict[str, Any]:

@@ -15,6 +15,8 @@ This repository currently contains a functional API prototype:
 - `GET /subscriptions`
 - `GET /setup`
 - `GET /v1/provider-presets`
+- `GET /v1/router/policies`
+- `POST /v1/router/plan`
 - `GET /v1/codex/status`
 - `POST /v1/codex/run`
 - `GET /v1/oracle/status`
@@ -31,7 +33,7 @@ This repository currently contains a functional API prototype:
 - `GET /v1/traces/{run_id}`
 - `POST /v1/contributions/preview`
 
-The local build now proves the API surface, connector registry, Codex/Oracle dry-runs, OpenAI-compatible provider calls, OpenAI-compatible chat proxying for Hermes, trace store, and local redaction/contribution preview path.
+The local build now proves the API surface, connector registry, deterministic router planning, Codex/Oracle dry-runs, OpenAI-compatible provider calls, OpenAI-compatible chat proxying for Hermes, trace store, and local redaction/contribution preview path.
 
 ## Link subscriptions and API providers
 
@@ -81,7 +83,7 @@ curl http://127.0.0.1:8765/v1/subscriptions \
     "account_label":"Kimi Coding Plan",
     "plan":"Kimi K2.7 Code",
     "connector_type":"api_key_local",
-    "base_url":"https://api.moonshot.ai/v1",
+    "base_url":"https://api.kimi.com/coding/v1",
     "api_key":"***",
     "model_aliases":["kimi-k2.7-code","kimi-k2.7-code-highspeed"],
     "metadata":{"api_style":"openai_compatible"}
@@ -105,6 +107,27 @@ curl http://127.0.0.1:8765/v1/oracle/run \
 ```
 
 Linked `model_aliases` appear in `GET /v1/models` while the connector is enabled. OpenAI-compatible aliases can be called through `POST /v1/chat/completions`; Helmrail replaces the public alias with the configured upstream model before forwarding.
+
+Kimi coding-plan keys with the `sk-kimi-` prefix use `https://api.kimi.com/coding/v1`; legacy Moonshot API keys may still use `https://api.moonshot.ai/v1`. Helmrail adds the required Kimi Coding user-agent and normalizes temperature for that endpoint.
+
+## Router planning
+
+Helmrail exposes a deterministic plan-only router before it executes multi-worker orchestration. This is the first Fugu-style layer: inspect the task, choose a workflow shape, and explain which connected workers would be used.
+
+```text
+POST /v1/router/plan
+{"prompt":"Fix a failing Python test and produce a patch."}
+```
+
+Current built-in policy modes:
+
+| Task type | Mode | Shape |
+| --- | --- | --- |
+| `default` | `direct` | OpenRouter primary, direct API fallbacks |
+| `fast` | `race` | Z.ai, Kimi, and OpenRouter candidates |
+| `cheap` | `direct` | direct coding-plan API first |
+| `coding` | `worker_verifier` | Codex worker, Kimi fallback, OpenRouter verifier |
+| `high_confidence` | `compare` | independent candidates plus synthesizer |
 
 ## Test through Hermes
 

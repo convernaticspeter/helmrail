@@ -210,7 +210,121 @@ def test_subscription_endpoints_require_auth_when_enabled(tmp_path):
     assert c.get("/v1/subscriptions").status_code == 401
     assert c.get("/v1/codex/status").status_code == 401
     assert c.get("/v1/oracle/status").status_code == 401
+    assert c.get("/v1/router/policies").status_code == 401
+    assert c.post("/v1/router/plan", json={"prompt": "hi"}).status_code == 401
     assert c.get("/v1/subscriptions", headers={"Authorization": "Bearer secret"}).status_code == 200
+    assert c.get("/v1/router/policies", headers={"Authorization": "Bearer secret"}).status_code == 200
+
+
+def test_router_plan_selects_coding_worker_verifier_flow(tmp_path, monkeypatch):
+    c = client(tmp_path)
+    monkeypatch.setenv("TEST_KIMI_KEY", "local-test-key")
+    monkeypatch.setenv("TEST_OPENROUTER_KEY", "local-test-key")
+    monkeypatch.setenv("TEST_ZAI_KEY", "local-test-key")
+
+    for payload in [
+        {
+            "provider": "openai",
+            "account_label": "OpenAI Subscription via Codex CLI",
+            "connector_type": "codex_cli",
+            "credential_ref": "python3",
+            "model_aliases": ["helmrail-codex", "gpt-5.5"],
+            "metadata": {"api_style": "codex_cli"},
+        },
+        {
+            "provider": "kimi",
+            "account_label": "Kimi Coding Plan",
+            "connector_type": "api_key_env",
+            "credential_ref": "TEST_KIMI_KEY",
+            "base_url": "https://api.kimi.com/coding/v1",
+            "model_aliases": ["helmrail-kimi", "kimi-k2.7-code"],
+            "metadata": {
+                "api_style": "openai_compatible",
+                "upstream_model": "kimi-k2.7-code",
+                "model_alias_map": {"helmrail-kimi": "kimi-k2.7-code"},
+            },
+        },
+        {
+            "provider": "openrouter",
+            "account_label": "OpenRouter API",
+            "connector_type": "api_key_env",
+            "credential_ref": "TEST_OPENROUTER_KEY",
+            "base_url": "https://openrouter.ai/api/v1",
+            "model_aliases": ["helmrail-openrouter"],
+            "metadata": {
+                "api_style": "openai_compatible",
+                "upstream_model": "openrouter/auto",
+                "model_alias_map": {"helmrail-openrouter": "openrouter/auto"},
+            },
+        },
+        {
+            "provider": "zai",
+            "account_label": "Z.ai Coding Plan",
+            "connector_type": "api_key_env",
+            "credential_ref": "TEST_ZAI_KEY",
+            "base_url": "https://api.z.ai/api/coding/paas/v4",
+            "model_aliases": ["helmrail-zai"],
+            "metadata": {
+                "api_style": "openai_compatible",
+                "upstream_model": "glm-5.2",
+                "model_alias_map": {"helmrail-zai": "glm-5.2"},
+            },
+        },
+    ]:
+        assert c.post("/v1/subscriptions", json=payload).status_code == 200
+
+    plan = c.post("/v1/router/plan", json={"prompt": "Fix this Python bug and produce a patch."})
+    assert plan.status_code == 200
+    body = plan.json()
+    assert body["object"] == "router.plan"
+    assert body["task_type"] == "coding"
+    assert body["mode"] == "worker_verifier"
+    assert body["ready"] is True
+    assert body["selected_worker"]["alias"] == "helmrail-codex"
+    assert body["selected_worker"]["connector_type"] == "codex_cli"
+    workers = {(worker["role"], worker["alias"]): worker for worker in body["workers"]}
+    assert workers[("fallback_worker", "helmrail-kimi")]["upstream_model"] == "kimi-k2.7-code"
+    assert workers[("verifier", "helmrail-openrouter")]["upstream_model"] == "openrouter/auto"
+    assert plan.headers["X-Helmrail-Trace-Id"] == body["trace_id"]
+
+
+def test_router_plan_fast_mode_races_ready_api_workers(tmp_path, monkeypatch):
+    c = client(tmp_path)
+    monkeypatch.setenv("TEST_KIMI_KEY", "local-test-key")
+    monkeypatch.setenv("TEST_ZAI_KEY", "local-test-key")
+    for payload in [
+        {
+            "provider": "kimi",
+            "account_label": "Kimi Coding Plan",
+            "connector_type": "api_key_env",
+            "credential_ref": "TEST_KIMI_KEY",
+            "base_url": "https://api.kimi.com/coding/v1",
+            "model_aliases": ["helmrail-kimi"],
+            "metadata": {"api_style": "openai_compatible", "upstream_model": "kimi-k2.7-code"},
+        },
+        {
+            "provider": "zai",
+            "account_label": "Z.ai Coding Plan",
+            "connector_type": "api_key_env",
+            "credential_ref": "TEST_ZAI_KEY",
+            "base_url": "https://api.z.ai/api/coding/paas/v4",
+            "model_aliases": ["helmrail-zai"],
+            "metadata": {"api_style": "openai_compatible", "upstream_model": "glm-5.2"},
+        },
+    ]:
+        assert c.post("/v1/subscriptions", json=payload).status_code == 200
+
+    plan = c.post("/v1/router/plan", json={"task_type": "fast", "prompt": "quick summary"})
+    assert plan.status_code == 200
+    body = plan.json()
+    assert body["task_type"] == "fast"
+    assert body["mode"] == "race"
+    assert body["selected_worker"]["alias"] == "helmrail-zai"
+    assert [worker["alias"] for worker in body["workers"] if worker["role"] == "candidate"] == [
+        "helmrail-zai",
+        "helmrail-kimi",
+        "helmrail-openrouter",
+    ]
 
 
 def test_chat_completion_creates_trace_and_contribution_preview(tmp_path):
