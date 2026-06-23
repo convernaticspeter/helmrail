@@ -337,16 +337,27 @@ def openai_compatible_chat_completion(
     forwarded_payload = dict(payload)
     forwarded_payload["model"] = upstream_model
     forwarded_payload.pop("helmrail_trace_id", None)
+    is_kimi_coding = "api.kimi.com/coding" in base_url.lower()
+    if is_kimi_coding:
+        # Kimi Coding currently rejects other temperature values (`only 1 is
+        # allowed for this model`). Normalize client defaults so OpenAI-style
+        # callers do not fail on harmless sampling settings.
+        forwarded_payload["temperature"] = 1
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "HTTP-Referer": "http://127.0.0.1:8765",
+        "X-Title": "Helmrail Local",
+    }
+    if is_kimi_coding:
+        headers["User-Agent"] = "claude-code/0.1.0"
+
     request = urllib.request.Request(
         f"{base_url}/chat/completions",
         data=json.dumps(forwarded_payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "HTTP-Referer": "http://127.0.0.1:8765",
-            "X-Title": "Helmrail Local",
-        },
+        headers=headers,
         method="POST",
     )
     try:
