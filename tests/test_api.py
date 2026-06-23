@@ -239,6 +239,91 @@ def test_chat_completion_creates_trace_and_contribution_preview(tmp_path):
     assert "[SECRET_REDACTED]" in preview_text
 
 
+def test_chat_completion_routes_linked_openai_compatible_provider(tmp_path, monkeypatch):
+    c = client(tmp_path)
+    monkeypatch.setenv("TEST_KIMI_KEY", "local-test-key")
+    created = c.post(
+        "/v1/subscriptions",
+        json={
+            "provider": "kimi",
+            "account_label": "Kimi Coding Plan",
+            "plan": "Kimi K2.7 Code",
+            "connector_type": "api_key_env",
+            "credential_ref": "TEST_KIMI_KEY",
+            "base_url": "https://api.moonshot.ai/v1",
+            "model_aliases": ["helmrail-kimi", "kimi-k2.7-code"],
+            "metadata": {
+                "api_style": "openai_compatible",
+                "upstream_model": "kimi-k2.7-code",
+                "model_alias_map": {"helmrail-kimi": "kimi-k2.7-code"},
+            },
+        },
+    )
+    assert created.status_code == 200
+
+    calls = []
+
+    def fake_forward(*, subscription, api_key, payload, upstream_model, timeout=120):
+        calls.append({"subscription": subscription, "api_key": api_key, "payload": payload, "upstream_model": upstream_model})
+        return {
+            "ok": True,
+            "status_code": 200,
+            "provider": subscription["provider"],
+            "upstream_model": upstream_model,
+            "raw": {
+                "id": "chatcmpl_test",
+                "object": "chat.completion",
+                "created": 1760000000,
+                "model": upstream_model,
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "PONG"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            },
+        }
+
+    monkeypatch.setattr("app.main.openai_compatible_chat_completion", fake_forward)
+    response = c.post(
+        "/v1/chat/completions",
+        json={
+            "model": "helmrail-kimi",
+            "messages": [{"role": "user", "content": "Say PONG only"}],
+            "temperature": 0,
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["choices"][0]["message"]["content"] == "PONG"
+    assert body["helmrail_route"]["provider"] == "kimi"
+    assert body["helmrail_route"]["upstream_model"] == "kimi-k2.7-code"
+    assert calls[0]["api_key"] == "local-test-key"
+    assert calls[0]["payload"]["model"] == "helmrail-kimi"
+    assert calls[0]["upstream_model"] == "kimi-k2.7-code"
+
+
+def test_chat_completion_rejects_native_provider_alias(tmp_path, monkeypatch):
+    c = client(tmp_path)
+    monkeypatch.setenv("TEST_ANTHROPIC_KEY", "local-test-key")
+    created = c.post(
+        "/v1/subscriptions",
+        json={
+            "provider": "anthropic",
+            "account_label": "Anthropic API",
+            "plan": "Claude API",
+            "connector_type": "api_key_env",
+            "credential_ref": "TEST_ANTHROPIC_KEY",
+            "base_url": "https://api.anthropic.com",
+            "model_aliases": ["helmrail-claude"],
+            "metadata": {"api_style": "anthropic_native", "upstream_model": "claude-sonnet-4.6"},
+        },
+    )
+    assert created.status_code == 200
+    response = c.post(
+        "/v1/chat/completions",
+        json={"model": "helmrail-claude", "messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert response.status_code == 501
+    assert "OpenAI-compatible" in response.json()["detail"]
+
+
 def test_responses_endpoint(tmp_path):
     c = client(tmp_path)
     response = c.post("/v1/responses", json={"model": "helmrail-ultra", "input": "Say hello"})

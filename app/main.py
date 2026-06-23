@@ -19,6 +19,7 @@ from .connectors import (
     codex_cli_run,
     codex_status,
     openai_compatible_chat,
+    openai_compatible_chat_completion,
     oracle_status,
     pro_oracle_run,
     public_presets,
@@ -104,6 +105,50 @@ def _prototype_answer(prompt: str) -> str:
         "and anonymized contribution pipeline.\n\n"
         f"Received input preview: {preview}"
     )
+
+
+def _subscription_for_model(store: TraceStore, requested_model: str) -> dict[str, Any] | None:
+    subscriptions = [item for item in store.list_subscriptions() if item["enabled"]]
+    for subscription in subscriptions:
+        if requested_model in subscription["model_aliases"]:
+            return subscription
+
+    if requested_model in {"helmrail-fast", "helmrail-ultra"}:
+        runnable = [
+            item
+            for item in subscriptions
+            if api_style_for(item) == "openai_compatible"
+            and item["connector_type"] in {"api_key_env", "api_key_local"}
+        ]
+        runnable.sort(key=lambda item: int((item.get("metadata") or {}).get("helmrail_priority", 100)))
+        return runnable[0] if runnable else None
+
+    return None
+
+
+def _upstream_model_for(subscription: dict[str, Any], requested_model: str) -> str:
+    metadata = subscription.get("metadata") or {}
+    alias_map = metadata.get("model_alias_map") if isinstance(metadata, dict) else None
+    if isinstance(alias_map, dict):
+        mapped = alias_map.get(requested_model)
+        if isinstance(mapped, str) and mapped.strip():
+            return mapped.strip()
+    upstream = metadata.get("upstream_model") if isinstance(metadata, dict) else None
+    if isinstance(upstream, str) and upstream.strip() and requested_model.startswith("helmrail-"):
+        return upstream.strip()
+    return requested_model
+
+
+def _safe_route(subscription: dict[str, Any], upstream_model: str) -> dict[str, Any]:
+    return {
+        "subscription_id": subscription["id"],
+        "provider": subscription["provider"],
+        "account_label": subscription["account_label"],
+        "connector_type": subscription["connector_type"],
+        "api_style": api_style_for(subscription),
+        "base_url": subscription["base_url"],
+        "upstream_model": upstream_model,
+    }
 
 
 def _require_auth(settings: Settings):
@@ -752,6 +797,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         messages = payload.get("messages") or []
         if not isinstance(messages, list):
             raise HTTPException(status_code=422, detail="messages must be a list")
+
+        subscription = _subscription_for_model(store, model)
+        if subscription is not None:
+            style = api_style_for(subscription)
+            upstream_model = _upstream_model_for(subscription, model)
+            route = _safe_route(subscription, upstream_model)
+            if style != "openai_compatible":
+                raise HTTPException(
+                    status_code=501,
+                    detail=f"Model {model} is linked to {style}, but /v1/chat/completions currently runs OpenAI-compatible API providers only.",
+                )
+            secret = resolve_secret(subscription, store.get_subscription_secret(subscription["id"]))
+            if not secret:
+                raise HTTPException(status_code=422, detail=f"Model {model} has no usable API key or env var")
+            result = openai_compatible_chat_completion(
+                subscription=subscription,
+                api_key=secret,
+                payload=payload,
+                upstream_model=upstream_model,
+            )
+            run_id = store.save_trace(
+                endpoint="/v1/chat/completions",
+                model=model,
+                input_payload={**payload, "_helmrail_route": route},
+                output_payload=result,
+                metadata={
+                    "router_family": "openai-compatible-proxy",
+                    "workflow_shape": "single-provider",
+                    "worker_classes": ["chat"],
+                    "success_signal": "provider_ok" if result.get("ok") else "provider_error",
+                    "provider": subscription["provider"],
+                    "upstream_model": upstream_model,
+                },
+            )
+            response.headers["X-Helmrail-Trace-Id"] = run_id
+            if not result.get("ok"):
+                raise HTTPException(status_code=int(result.get("status_code") or 502), detail=result.get("error") or result)
+            raw = result.get("raw")
+            if not isinstance(raw, dict):
+                raise HTTPException(status_code=502, detail="Provider returned a non-object chat completion payload")
+            raw["helmrail_trace_id"] = run_id
+            raw["helmrail_route"] = route
+            return raw
 
         prompt = _last_user_text(messages)
         answer = _prototype_answer(prompt)

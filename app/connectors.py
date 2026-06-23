@@ -291,14 +291,6 @@ def openai_compatible_chat(
     system_prompt: str,
     timeout: int = 90,
 ) -> dict[str, Any]:
-    base_url = str(subscription.get("base_url") or "").strip().rstrip("/")
-    if not base_url:
-        raise ValueError("This provider needs a base_url for OpenAI-compatible chat completions.")
-    if not api_key:
-        raise ValueError("No API key is available for this provider.")
-    if not model:
-        raise ValueError("No model was selected.")
-
     payload = {
         "model": model,
         "messages": [
@@ -307,9 +299,47 @@ def openai_compatible_chat(
         ],
         "temperature": 0.2,
     }
+    result = openai_compatible_chat_completion(
+        subscription=subscription,
+        api_key=api_key,
+        payload=payload,
+        upstream_model=model,
+        timeout=timeout,
+    )
+    if result.get("ok"):
+        raw_body = result.get("raw")
+        if not isinstance(raw_body, dict):
+            raw_body = {}
+        return {
+            **result,
+            "model": model,
+            "response_text": _extract_chat_text(raw_body),
+        }
+    return {**result, "model": model}
+
+
+def openai_compatible_chat_completion(
+    *,
+    subscription: dict[str, Any],
+    api_key: str,
+    payload: dict[str, Any],
+    upstream_model: str,
+    timeout: int = 120,
+) -> dict[str, Any]:
+    base_url = str(subscription.get("base_url") or "").strip().rstrip("/")
+    if not base_url:
+        raise ValueError("This provider needs a base_url for OpenAI-compatible chat completions.")
+    if not api_key:
+        raise ValueError("No API key is available for this provider.")
+    if not upstream_model:
+        raise ValueError("No model was selected.")
+
+    forwarded_payload = dict(payload)
+    forwarded_payload["model"] = upstream_model
+    forwarded_payload.pop("helmrail_trace_id", None)
     request = urllib.request.Request(
         f"{base_url}/chat/completions",
-        data=json.dumps(payload).encode("utf-8"),
+        data=json.dumps(forwarded_payload).encode("utf-8"),
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -323,13 +353,11 @@ def openai_compatible_chat(
         with urllib.request.urlopen(request, timeout=timeout) as response:
             raw = response.read().decode("utf-8", "replace")
             body = json.loads(raw)
-            text = _extract_chat_text(body)
             return {
                 "ok": True,
                 "status_code": response.status,
-                "model": model,
                 "provider": subscription.get("provider"),
-                "response_text": text,
+                "upstream_model": upstream_model,
                 "raw": body,
             }
     except urllib.error.HTTPError as exc:
@@ -341,8 +369,8 @@ def openai_compatible_chat(
         return {
             "ok": False,
             "status_code": exc.code,
-            "model": model,
             "provider": subscription.get("provider"),
+            "upstream_model": upstream_model,
             "error": body,
         }
 

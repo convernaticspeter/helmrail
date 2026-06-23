@@ -31,7 +31,7 @@ This repository currently contains a functional API prototype:
 - `GET /v1/traces/{run_id}`
 - `POST /v1/contributions/preview`
 
-The local build now proves the API surface, connector registry, Codex/Oracle dry-runs, OpenAI-compatible provider calls, trace store, and local redaction/contribution preview path.
+The local build now proves the API surface, connector registry, Codex/Oracle dry-runs, OpenAI-compatible provider calls, OpenAI-compatible chat proxying for Hermes, trace store, and local redaction/contribution preview path.
 
 ## Link subscriptions and API providers
 
@@ -104,7 +104,36 @@ curl http://127.0.0.1:8765/v1/oracle/run \
   -d '{"prompt":"Give me a second opinion","model":"gpt-5.5-pro","dry_run":true}'
 ```
 
-Linked `model_aliases` appear in `GET /v1/models` while the connector is enabled.
+Linked `model_aliases` appear in `GET /v1/models` while the connector is enabled. OpenAI-compatible aliases can be called through `POST /v1/chat/completions`; Helmrail replaces the public alias with the configured upstream model before forwarding.
+
+## Test through Hermes
+
+A local Hermes custom provider can point at Helmrail's OpenAI-compatible endpoint:
+
+```yaml
+providers:
+  helmrail:
+    name: Helmrail Local
+    base_url: http://127.0.0.1:8765/v1
+    key_env: HELMRAIL_API_KEY
+    api_mode: chat_completions
+    model: helmrail-openrouter
+    models:
+      helmrail-openrouter: {context_length: 128000}
+      helmrail-kimi: {context_length: 262144}
+```
+
+Run a smoke test without switching Hermes' default provider:
+
+```bash
+hermes chat -q 'Reply with exactly: HERMES_HELMRAIL_OK' \
+  --provider custom:helmrail \
+  -m helmrail-openrouter \
+  --toolsets safe \
+  -Q
+```
+
+The local launchd wrapper should load the existing provider keys from `~/.hermes/.env` and keep Helmrail bound to `127.0.0.1:8765`. `HELMRAIL_API_KEY` is the bearer token Hermes uses when calling Helmrail.
 
 ## Run locally
 
