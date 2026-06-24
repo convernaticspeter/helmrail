@@ -35,6 +35,8 @@ def test_models(tmp_path):
     model_ids = [model["id"] for model in response.json()["data"]]
     assert "helmrail-fast" in model_ids
     assert "helmrail-ultra" in model_ids
+    assert "helmrail-coordinator" in model_ids
+    assert "helmrail-auto" in model_ids
 
 
 def test_subscriptions_page(tmp_path):
@@ -514,6 +516,93 @@ def test_chat_completion_creates_trace_and_contribution_preview(tmp_path):
     assert "peter@example.com" not in preview_text
     assert "[EMAIL_REDACTED]" in preview_text
     assert "[SECRET_REDACTED]" in preview_text
+
+
+def test_chat_completion_coordinator_behaves_like_model_and_collects_training_trace(tmp_path, monkeypatch):
+    c = client(tmp_path)
+    monkeypatch.setenv("TEST_OPENROUTER_KEY", "local-test-key")
+    created = c.post(
+        "/v1/subscriptions",
+        json={
+            "provider": "openrouter",
+            "account_label": "OpenRouter API",
+            "connector_type": "api_key_env",
+            "credential_ref": "TEST_OPENROUTER_KEY",
+            "base_url": "https://openrouter.ai/api/v1",
+            "model_aliases": ["helmrail-openrouter"],
+            "metadata": {"api_style": "openai_compatible", "upstream_model": "openrouter/auto"},
+        },
+    )
+    assert created.status_code == 200
+
+    calls = []
+
+    def fake_forward(*, subscription, api_key, payload, upstream_model, timeout=120):
+        calls.append({"subscription": subscription, "api_key": api_key, "payload": payload, "upstream_model": upstream_model})
+        system = payload["messages"][0]["content"]
+        if "Coordinator Planner" in system:
+            content = (
+                '{"task_profile":"google_ads","mode":"worker_verifier","confidence":"high",'
+                '"capabilities":["google_ads","conversion_optimization"],'
+                '"tool_affinity":["google_ads_api","analytics_api"],'
+                '"worker_instructions":[{"role":"worker","goal":"Create strategy","expected_output":"plan"}],'
+                '"missing_context":["account data"],"rationale":"Google Ads task"}'
+            )
+        else:
+            content = "Hier ist eine saubere Google-Ads-Strategie als normales Modell-Output."
+        return {
+            "ok": True,
+            "status_code": 200,
+            "provider": subscription["provider"],
+            "upstream_model": upstream_model,
+            "raw": {
+                "id": "chatcmpl_test",
+                "object": "chat.completion",
+                "created": 1760000000,
+                "model": upstream_model,
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            },
+        }
+
+    monkeypatch.setattr("app.orchestration.openai_compatible_chat_completion", fake_forward)
+    response = c.post(
+        "/v1/chat/completions",
+        json={
+            "model": "helmrail-coordinator",
+            "messages": [{"role": "user", "content": "Erstelle eine Google Ads Strategie für peter@example.com token=abc123"}],
+            "temperature": 0,
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["object"] == "chat.completion"
+    assert body["model"] == "helmrail-coordinator"
+    assert body["choices"][0]["message"]["content"].startswith("Hier ist")
+    assert "helmrail_route" not in body
+    assert "orchestration_steps" not in body
+    assert len(calls) == 2
+    assert calls[0]["api_key"] == "local-test-key"
+    assert calls[0]["upstream_model"] == "openai/gpt-5.5"
+
+    run_id = response.headers["X-Helmrail-Trace-Id"]
+    trace = c.get(f"/v1/traces/{run_id}").json()
+    metadata = trace["metadata"]
+    assert metadata["router_family"] == "llm-coordinator"
+    assert metadata["workflow_shape"] == "fugu-style-coordinator-as-model"
+    assert metadata["paper_alignment"]["sakana_fugu"].startswith("API-facing model")
+    assert metadata["paper_alignment"]["deterministic_classifier"] is False
+    assert metadata["coordinator_decision"]["task_profile"] == "google_ads"
+    assert metadata["worker_plan"]["task_type"] == "google_ads"
+    assert metadata["training_intent"] == "future_coordinator_model"
+
+    preview = c.post("/v1/contributions/preview", json={"run_id": run_id})
+    assert preview.status_code == 200
+    preview_text = str(preview.json())
+    assert "peter@example.com" not in preview_text
+    assert "[EMAIL_REDACTED]" in preview_text
+    assert "[SECRET_REDACTED]" in preview_text
+    assert "future_coordinator_model" in preview_text
 
 
 def test_chat_completion_routes_linked_openai_compatible_provider(tmp_path, monkeypatch):

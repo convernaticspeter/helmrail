@@ -111,9 +111,29 @@ Linked `model_aliases` appear in `GET /v1/models` while the connector is enabled
 
 Kimi coding-plan keys with the `sk-kimi-` prefix use `https://api.kimi.com/coding/v1`; legacy Moonshot API keys may still use `https://api.moonshot.ai/v1`. Helmrail adds the required Kimi Coding user-agent and normalizes temperature for that endpoint.
 
+## Fugu-style coordinator model
+
+Helmrail exposes coordinator aliases through the normal OpenAI-compatible `/v1/chat/completions` API:
+
+- `helmrail-coordinator`
+- `helmrail-auto`
+- `helmrail-ultra`
+
+These behave like regular models to API clients. The response body is a normal `chat.completion`; internal routing, planner JSON, worker plan, and training metadata are stored only in the local trace store and contribution-preview path.
+
+Current coordinator flow:
+
+1. Resolve the fixed coordinator model (`gpt-5.5` by default, usually via OpenRouter).
+2. Run a hidden LLM planning pass — not keyword classification — to select task profile, mode, capabilities, tool affinity, and worker instructions.
+3. Resolve that LLM-selected profile into runnable worker/subscription metadata.
+4. Run the coordinator answer pass and return only the final model response.
+5. Store local trace data for future coordinator training (`training_intent: future_coordinator_model`). Nothing uploads automatically.
+
+This follows the Sakana Fugu interface idea: **multi-agent system as a model**. Raw linked provider aliases still work as direct proxy models when called explicitly.
+
 ## Router planning
 
-Helmrail uses a **model-level** deterministic router. Policies reference real model IDs (e.g. `gpt-5.5`, `claude-opus-4.6`), not provider aliases. Helmrail then resolves each model to the best available subscription:
+Helmrail also keeps a **model-level** router for transparent planning/debugging. Policies reference real model IDs (e.g. `gpt-5.5`, `claude-opus-4.6`), not provider aliases. Helmrail then resolves each model to the best available subscription:
 
 1. **OpenRouter** (priority 0) — one key, many models
 2. **Special connectors** (priority 1) — Codex CLI, Oracle browser, Kimi Coding Plan
@@ -189,8 +209,11 @@ providers:
     base_url: http://127.0.0.1:8765/v1
     key_env: HELMRAIL_API_KEY
     api_mode: chat_completions
-    model: helmrail-openrouter
+    model: helmrail-coordinator
     models:
+      helmrail-coordinator: {context_length: 128000}
+      helmrail-auto: {context_length: 128000}
+      helmrail-ultra: {context_length: 128000}
       helmrail-openrouter: {context_length: 128000}
       helmrail-kimi: {context_length: 262144}
 ```

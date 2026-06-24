@@ -27,6 +27,7 @@ from .connectors import (
 )
 from .redaction import redact_json, redact_text
 from .model_catalog import ModelCatalog, load_catalog
+from .orchestration import is_coordinator_model, run_coordinator_chat
 from .routing import DEFAULT_ROUTE_POLICIES, plan_route
 from .store import TraceStore
 from .ui import setup_page
@@ -527,14 +528,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "object": "model",
                 "created": created,
                 "owned_by": "helmrail",
-                "description": "Prototype single-worker/router-compatible model alias.",
+                "description": "Low-latency Helmrail model alias; direct provider fallback while coordinator models mature.",
+            },
+            {
+                "id": "helmrail-coordinator",
+                "object": "model",
+                "created": created,
+                "owned_by": "helmrail",
+                "description": "Fugu-style API-facing coordinator model over hidden specialist routing and trace collection.",
+            },
+            {
+                "id": "helmrail-auto",
+                "object": "model",
+                "created": created,
+                "owned_by": "helmrail",
+                "description": "Alias for the Helmrail coordinator model.",
             },
             {
                 "id": "helmrail-ultra",
                 "object": "model",
                 "created": created,
                 "owned_by": "helmrail",
-                "description": "Prototype conductor-compatible model alias.",
+                "description": "High-capability alias for the Helmrail coordinator model.",
             },
         ]
         for subscription in store.list_subscriptions():
@@ -851,6 +866,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not isinstance(messages, list):
             raise HTTPException(status_code=422, detail="messages must be a list")
 
+        if is_coordinator_model(model):
+            subscriptions = store.list_subscriptions()
+            readiness = {item["id"]: _probe_subscription(item) for item in subscriptions if item["enabled"]}
+            coordinator_run = run_coordinator_chat(
+                visible_model=model,
+                payload=payload,
+                messages=messages,
+                subscriptions=subscriptions,
+                catalog=catalog,
+                readiness=readiness,
+                get_secret=lambda subscription_id: resolve_secret(
+                    store.get_subscription(subscription_id) or {},
+                    store.get_subscription_secret(subscription_id),
+                ),
+            )
+            metadata = coordinator_run.get("metadata") or {}
+            if not coordinator_run.get("ok"):
+                run_id = store.save_trace(
+                    endpoint="/v1/chat/completions",
+                    model=model,
+                    input_payload={**payload, "_helmrail_error": "coordinator_unavailable"},
+                    output_payload={"ok": False, "error": coordinator_run.get("error")},
+                    metadata=metadata,
+                )
+                response.headers["X-Helmrail-Trace-Id"] = run_id
+                raise HTTPException(status_code=int(coordinator_run.get("status_code") or 502), detail=coordinator_run.get("error") or coordinator_run)
+            output = coordinator_run["output"]
+            run_id = store.save_trace(
+                endpoint="/v1/chat/completions",
+                model=model,
+                input_payload=payload,
+                output_payload=output,
+                metadata=metadata,
+            )
+            response.headers["X-Helmrail-Trace-Id"] = run_id
+            # Fugu-style surface: return a normal chat.completion. Keep routing,
+            # planner JSON, and worker graph in the local trace/contribution path.
+            return output
+
         subscription = _subscription_for_model(store, model)
         if subscription is not None:
             style = api_style_for(subscription)
@@ -1014,6 +1068,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "router_family": metadata.get("router_family", "prototype-deterministic"),
                 "worker_classes": metadata.get("worker_classes", []),
                 "workflow_shape": metadata.get("workflow_shape", "single"),
+                "visible_model": metadata.get("visible_model", trace.get("model")),
+            },
+            "coordinator": {
+                "training_sample_schema_version": metadata.get("training_sample_schema_version", "0.1"),
+                "training_intent": metadata.get("training_intent", "none"),
+                "collection_mode": metadata.get("collection_mode", "local_trace_only"),
+                "coordinator_model": metadata.get("coordinator_model", ""),
+                "coordinator_provider": metadata.get("coordinator_provider", ""),
+                "coordinator_decision_redacted": redact_json(metadata.get("coordinator_decision", {})),
+                "worker_plan_redacted": redact_json(metadata.get("worker_plan", {})),
+                "paper_alignment": metadata.get("paper_alignment", {}),
             },
             "observations": {
                 "latency_bucket": "unknown",
