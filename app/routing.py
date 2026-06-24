@@ -168,6 +168,214 @@ def _policy_for_task(task_type: str, catalog: ModelCatalog) -> tuple[dict[str, A
     return dict(DEFAULT_ROUTE_POLICIES["default"]), None
 
 
+DOMAIN_TOOL_AFFINITY: dict[str, list[str]] = {
+    "architecture": ["repo_inspection", "terminal", "web_research", "diagramming"],
+    "development": ["repo_inspection", "terminal", "test_runner", "browser_qa"],
+    "design": ["browser_qa", "vision_review", "frontend_inspection", "design_reference_search"],
+    "growth_marketing": ["web_research", "browser_qa", "analytics_review", "copy_archive"],
+    "analytics": ["analytics_api", "tag_manager", "browser_devtools", "repo_inspection"],
+    "paid_media": ["ads_platform_api", "analytics_api", "landing_page_review", "web_research"],
+    "organic_social": ["platform_search", "trend_research", "content_calendar", "web_research"],
+    "content": ["web_research", "content_calendar", "source_review"],
+    "research": ["web_search", "source_verification", "archive_search", "data_extraction"],
+}
+
+CAPABILITY_TOOL_AFFINITY: dict[str, list[str]] = {
+    "backend_development": ["terminal", "test_runner", "api_client"],
+    "frontend_development": ["browser_qa", "terminal", "screenshot_review"],
+    "conversion_tracking_setup": ["tag_manager", "browser_devtools", "network_inspector"],
+    "analytics_instrumentation": ["analytics_api", "event_debugger"],
+    "google_ads": ["google_ads_api", "keyword_planner", "search_terms_report"],
+    "meta_ads": ["meta_ads_api", "creative_library", "analytics_api"],
+    "bing_ads": ["microsoft_ads_api", "keyword_planner"],
+    "tiktok_ads": ["tiktok_ads_api", "creative_center"],
+    "osint": ["dns_lookup", "whois", "web_search", "archive_search"],
+    "market_research_forums": ["reddit_search", "forum_search", "voice_of_customer_extraction"],
+    "scientific_research": ["paper_search", "citation_review", "pdf_extraction"],
+    "journalistic_research": ["source_verification", "archive_search", "fact_checking"],
+}
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        clean = str(value).strip()
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        result.append(clean)
+    return result
+
+
+def _capability_weights(profile: dict[str, Any] | None) -> dict[str, float]:
+    """Return normalized capability weights for a task profile."""
+    if not profile:
+        return {}
+
+    explicit = profile.get("capability_weights")
+    if isinstance(explicit, dict) and explicit:
+        parsed: dict[str, float] = {}
+        for capability, raw_weight in explicit.items():
+            weight = float(raw_weight)
+            if weight > 0:
+                parsed[str(capability)] = weight
+        total = sum(parsed.values())
+        if total > 0:
+            return {
+                capability: round(weight / total, 4)
+                for capability, weight in sorted(parsed.items(), key=lambda item: item[1], reverse=True)
+            }
+
+    required = _dedupe([str(cap) for cap in (profile.get("required_capabilities") or [])])
+    helpful = [cap for cap in _dedupe([str(cap) for cap in (profile.get("helpful_capabilities") or [])]) if cap not in required]
+    if not required and not helpful:
+        return {}
+
+    required_pool = 0.7 if helpful else 1.0
+    helpful_pool = 0.3 if required else 1.0
+    weights: dict[str, float] = {}
+    if required:
+        for capability in required:
+            weights[capability] = weights.get(capability, 0.0) + required_pool / len(required)
+    if helpful:
+        for capability in helpful:
+            weights[capability] = weights.get(capability, 0.0) + helpful_pool / len(helpful)
+    return {
+        capability: round(weight, 4)
+        for capability, weight in sorted(weights.items(), key=lambda item: item[1], reverse=True)
+    }
+
+
+def _tool_affinity(profile: dict[str, Any] | None) -> list[str]:
+    """Return tool/integration affinities for a profile.
+
+    These are descriptive capabilities, not commands to execute. An orchestrator
+    can later map them to concrete Hermes toolsets, MCP tools, or platform APIs.
+    """
+    if not profile:
+        return []
+
+    tools: list[str] = []
+    explicit = profile.get("tool_affinity")
+    if isinstance(explicit, list):
+        tools.extend(str(tool) for tool in explicit)
+
+    domain = str(profile.get("domain") or "")
+    tools.extend(DOMAIN_TOOL_AFFINITY.get(domain, []))
+    for capability in [*(profile.get("required_capabilities") or []), *(profile.get("helpful_capabilities") or [])]:
+        tools.extend(CAPABILITY_TOOL_AFFINITY.get(str(capability), []))
+    return _dedupe(tools)
+
+
+def _worker_ref(worker: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not worker:
+        return None
+    return {
+        "role": worker.get("role"),
+        "model_id": worker.get("model_id"),
+        "route_via": worker.get("route_via"),
+        "ready": bool(worker.get("ready")),
+        "status": worker.get("status"),
+    }
+
+
+def _orchestration_steps(
+    *,
+    policy: dict[str, Any],
+    task_profile: dict[str, Any] | None,
+    workers: list[dict[str, Any]],
+    mode: str,
+) -> list[dict[str, Any]]:
+    """Build executable-ish orchestration steps from the route policy.
+
+    This stays plan-only: no provider calls, no tool calls, no side effects.
+    """
+    by_role = {str(worker.get("role")): worker for worker in workers}
+    required = list((task_profile or {}).get("required_capabilities") or policy.get("required_capabilities") or [])
+    helpful = list((task_profile or {}).get("helpful_capabilities") or policy.get("helpful_capabilities") or [])
+    primary_caps = required or ["general"]
+
+    if mode == "worker_verifier":
+        steps: list[dict[str, Any]] = [
+            {
+                "id": "scope",
+                "type": "analysis",
+                "worker": _worker_ref(by_role.get("worker")),
+                "capabilities": primary_caps[:3],
+                "purpose": "Clarify inputs, constraints, success criteria, and likely failure modes.",
+            },
+            {
+                "id": "produce",
+                "type": "work",
+                "worker": _worker_ref(by_role.get("worker")),
+                "capabilities": primary_caps,
+                "purpose": "Produce the primary artifact or technical plan for the task profile.",
+            },
+        ]
+        fallback = by_role.get("fallback_worker")
+        if fallback:
+            steps.append({
+                "id": "fallback_produce",
+                "type": "fallback",
+                "worker": _worker_ref(fallback),
+                "capabilities": primary_caps,
+                "condition": "Run if the primary worker is unavailable, low-confidence, or fails verification.",
+                "purpose": "Produce an alternate candidate through the fallback model.",
+            })
+        verifier = by_role.get("verifier")
+        if verifier:
+            steps.append({
+                "id": "verify",
+                "type": "verification",
+                "worker": _worker_ref(verifier),
+                "capabilities": _dedupe([*helpful, "reasoning", "risk_review"]),
+                "purpose": "Check correctness, risks, missing context, and produce a final synthesis.",
+            })
+        return steps
+
+    if mode in {"race", "compare"}:
+        steps = []
+        for idx, worker in enumerate([worker for worker in workers if worker.get("role") == "candidate"], start=1):
+            steps.append({
+                "id": f"candidate_{idx}",
+                "type": "parallel_candidate",
+                "worker": _worker_ref(worker),
+                "capabilities": primary_caps,
+                "purpose": "Generate an independent candidate answer for comparison.",
+            })
+        synthesizer = by_role.get("synthesizer")
+        if synthesizer:
+            steps.append({
+                "id": "synthesize",
+                "type": "synthesis",
+                "worker": _worker_ref(synthesizer),
+                "capabilities": _dedupe([*helpful, "reasoning", "decision_quality"]),
+                "purpose": "Compare candidates, resolve conflicts, and synthesize the final answer.",
+            })
+        return steps
+
+    steps = [
+        {
+            "id": "execute",
+            "type": "work",
+            "worker": _worker_ref(by_role.get("primary")),
+            "capabilities": primary_caps,
+            "purpose": "Execute the task directly with the selected primary model.",
+        }
+    ]
+    verifier = by_role.get("verifier")
+    if verifier:
+        steps.append({
+            "id": "review",
+            "type": "verification",
+            "worker": _worker_ref(verifier),
+            "capabilities": _dedupe([*helpful, "reasoning", "quality_review"]),
+            "purpose": "Review direct output before final delivery when confidence requirements justify it.",
+        })
+    return steps
+
+
 # --- Model-to-Subscription Resolution ---
 
 # OpenRouter model ID prefixes for each provider
@@ -447,13 +655,26 @@ def plan_route(
             workers.append(_model_worker(
                 role="fallback", model_id=str(model_id),
                 subscriptions=subscriptions, catalog=catalog, readiness=readiness))
-        selected = _first_ready(workers)
+        verifier = policy.get("verifier")
+        if verifier:
+            workers.append(_model_worker(
+                role="verifier", model_id=str(verifier),
+                subscriptions=subscriptions, catalog=catalog, readiness=readiness))
+        selected = _first_ready([worker for worker in workers if worker["role"] in {"primary", "fallback"}])
 
     ready_workers = [worker for worker in workers if worker.get("ready")]
     confidence = (
         "high" if selected and selected.get("ready") and len(ready_workers) >= 2
         else "medium" if selected and selected.get("ready")
         else "low"
+    )
+    capability_weights = _capability_weights(task_profile)
+    tool_affinity = _tool_affinity(task_profile)
+    orchestration_steps = _orchestration_steps(
+        policy=policy,
+        task_profile=task_profile,
+        workers=workers,
+        mode=resolved_mode,
     )
     return {
         "object": "router.plan",
@@ -463,6 +684,9 @@ def plan_route(
         "workers": workers,
         "ready": bool(selected and selected.get("ready")),
         "confidence": confidence,
+        "capability_weights": capability_weights,
+        "tool_affinity": tool_affinity,
+        "orchestration_steps": orchestration_steps,
         "policy": policy,
         "task_profile": task_profile,
         "explanation": policy.get("reason", "Deterministic policy selected from task type and model catalog."),

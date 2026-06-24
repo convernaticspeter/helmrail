@@ -417,6 +417,77 @@ def test_router_explicit_profile_for_conversion_tracking(tmp_path, monkeypatch):
     assert body["mode"] == "worker_verifier"
     assert body["policy"]["required_capabilities"] == ["conversion_tracking_setup", "analytics_instrumentation", "coding"]
     assert [worker["model_id"] for worker in body["workers"]] == ["gpt-5.5", "kimi-k2.7-code", "claude-opus-4.6"]
+    assert body["capability_weights"]["conversion_tracking_setup"] == 0.38
+    assert body["capability_weights"]["analytics_instrumentation"] == 0.24
+    assert "tag_manager" in body["tool_affinity"]
+    assert "network_inspector" in body["tool_affinity"]
+    assert [step["id"] for step in body["orchestration_steps"]] == ["scope", "produce", "fallback_produce", "verify"]
+    assert body["orchestration_steps"][-1]["worker"]["model_id"] == "claude-opus-4.6"
+
+
+def test_router_direct_profile_can_plan_review_step(tmp_path, monkeypatch):
+    c = client(tmp_path)
+    monkeypatch.setenv("TEST_OPENROUTER_KEY", "local-test-key")
+    assert c.post(
+        "/v1/subscriptions",
+        json={
+            "provider": "openrouter",
+            "account_label": "OpenRouter API",
+            "connector_type": "api_key_env",
+            "credential_ref": "TEST_OPENROUTER_KEY",
+            "base_url": "https://openrouter.ai/api/v1",
+            "model_aliases": ["helmrail-openrouter"],
+            "metadata": {"api_style": "openai_compatible", "upstream_model": "openrouter/auto"},
+        },
+    ).status_code == 200
+
+    response = c.post(
+        "/v1/router/plan",
+        json={"task_type": "ui_ux_design", "prompt": "Audit this checkout UI/UX."},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["mode"] == "direct"
+    assert body["selected_worker"]["model_id"] == "claude-opus-4.6"
+    assert [step["id"] for step in body["orchestration_steps"]] == ["execute", "review"]
+    assert body["orchestration_steps"][1]["worker"]["role"] == "verifier"
+    assert body["orchestration_steps"][1]["worker"]["model_id"] == "gpt-5.5-pro"
+    assert body["capability_weights"]["ui_ux_design"] == 0.35
+    assert "browser_qa" in body["tool_affinity"]
+    assert "design_reference_search" in body["tool_affinity"]
+
+
+def test_router_compare_profile_plans_parallel_candidates(tmp_path, monkeypatch):
+    c = client(tmp_path)
+    monkeypatch.setenv("TEST_OPENROUTER_KEY", "local-test-key")
+    assert c.post(
+        "/v1/subscriptions",
+        json={
+            "provider": "openrouter",
+            "account_label": "OpenRouter API",
+            "connector_type": "api_key_env",
+            "credential_ref": "TEST_OPENROUTER_KEY",
+            "base_url": "https://openrouter.ai/api/v1",
+            "model_aliases": ["helmrail-openrouter"],
+            "metadata": {"api_style": "openai_compatible", "upstream_model": "openrouter/auto"},
+        },
+    ).status_code == 200
+
+    response = c.post(
+        "/v1/router/plan",
+        json={"task_type": "conversion_optimization", "prompt": "Run a CRO audit."},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["mode"] == "compare"
+    assert [step["type"] for step in body["orchestration_steps"]] == [
+        "parallel_candidate",
+        "parallel_candidate",
+        "parallel_candidate",
+        "parallel_candidate",
+        "synthesis",
+    ]
+    assert body["orchestration_steps"][-1]["worker"]["role"] == "synthesizer"
 
 
 def test_chat_completion_creates_trace_and_contribution_preview(tmp_path):

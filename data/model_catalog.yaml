@@ -261,6 +261,14 @@ task_profiles:
     mode: worker_verifier
     required_capabilities: [system_architecture, reasoning, technical_implementation]
     helpful_capabilities: [backend_development, cloud_architecture, security_review]
+    capability_weights:
+      system_architecture: 0.35
+      reasoning: 0.25
+      technical_implementation: 0.15
+      backend_development: 0.10
+      cloud_architecture: 0.10
+      security_review: 0.05
+    tool_affinity: [repo_inspection, architecture_diagramming, api_schema_review, threat_modeling]
     primary_models: [claude-opus-4.6]
     fallback_models: [gpt-5.5]
     verifier_models: [gpt-5.5-pro]
@@ -309,6 +317,13 @@ task_profiles:
     mode: worker_verifier
     required_capabilities: [frontend_development, coding, ui_ux_design]
     helpful_capabilities: [debugging, visual_reasoning]
+    capability_weights:
+      frontend_development: 0.34
+      coding: 0.24
+      ui_ux_design: 0.18
+      debugging: 0.14
+      visual_reasoning: 0.10
+    tool_affinity: [repo_inspection, browser_qa, screenshot_review, test_runner]
     primary_models: [gpt-5.5]
     fallback_models: [kimi-k2.7-code, glm-5.2]
     verifier_models: [claude-opus-4.6]
@@ -321,6 +336,14 @@ task_profiles:
     mode: worker_verifier
     required_capabilities: [backend_development, coding, system_architecture]
     helpful_capabilities: [debugging, api_design, data_modeling]
+    capability_weights:
+      backend_development: 0.32
+      coding: 0.24
+      system_architecture: 0.18
+      debugging: 0.12
+      api_design: 0.08
+      data_modeling: 0.06
+    tool_affinity: [repo_inspection, terminal, test_runner, api_client]
     primary_models: [gpt-5.5]
     fallback_models: [kimi-k2.7-code, glm-5.2]
     verifier_models: [claude-opus-4.6]
@@ -333,6 +356,13 @@ task_profiles:
     mode: direct
     required_capabilities: [ui_ux_design, visual_reasoning, strategic_reasoning]
     helpful_capabilities: [conversion_optimization, frontend_development]
+    capability_weights:
+      ui_ux_design: 0.35
+      visual_reasoning: 0.22
+      strategic_reasoning: 0.18
+      conversion_optimization: 0.15
+      frontend_development: 0.10
+    tool_affinity: [browser_qa, screenshot_review, design_reference_search, frontend_inspection]
     primary_models: [claude-opus-4.6]
     fallback_models: [gemini-3-pro, gpt-5.5]
     verifier_models: [gpt-5.5-pro]
@@ -393,6 +423,14 @@ task_profiles:
     mode: worker_verifier
     required_capabilities: [conversion_tracking_setup, analytics_instrumentation, coding]
     helpful_capabilities: [google_ads, meta_ads, tag_manager, frontend_development]
+    capability_weights:
+      conversion_tracking_setup: 0.38
+      analytics_instrumentation: 0.24
+      coding: 0.18
+      frontend_development: 0.10
+      google_ads: 0.05
+      meta_ads: 0.05
+    tool_affinity: [tag_manager, browser_devtools, network_inspector, analytics_api, repo_inspection]
     primary_models: [gpt-5.5]
     fallback_models: [kimi-k2.7-code, glm-5.2]
     verifier_models: [claude-opus-4.6]
@@ -405,6 +443,13 @@ task_profiles:
     mode: worker_verifier
     required_capabilities: [google_ads, paid_media, conversion_optimization]
     helpful_capabilities: [copywriting, data_analysis, conversion_tracking_setup]
+    capability_weights:
+      google_ads: 0.35
+      conversion_optimization: 0.25
+      data_analysis: 0.18
+      copywriting: 0.12
+      conversion_tracking_setup: 0.10
+    tool_affinity: [google_ads_api, analytics_api, landing_page_review, search_terms_report, keyword_planner]
     primary_models: [gpt-5.5]
     fallback_models: [claude-opus-4.6, gemini-3-pro]
     verifier_models: [gpt-5.5-pro]
@@ -417,6 +462,13 @@ task_profiles:
     mode: worker_verifier
     required_capabilities: [meta_ads, paid_media, creative_strategy]
     helpful_capabilities: [copywriting, conversion_optimization, data_analysis]
+    capability_weights:
+      meta_ads: 0.32
+      creative_strategy: 0.24
+      conversion_optimization: 0.18
+      copywriting: 0.14
+      data_analysis: 0.12
+    tool_affinity: [meta_ads_api, creative_library, analytics_api, landing_page_review]
     primary_models: [claude-opus-4.6]
     fallback_models: [gpt-5.5, gemini-3-pro]
     verifier_models: [gpt-5.5-pro]
@@ -513,6 +565,13 @@ task_profiles:
     mode: worker_verifier
     required_capabilities: [market_research_forums, research_synthesis, strategy_positioning]
     helpful_capabilities: [copywriting, audience_research]
+    capability_weights:
+      market_research_forums: 0.34
+      research_synthesis: 0.26
+      strategy_positioning: 0.18
+      audience_research: 0.14
+      copywriting: 0.08
+    tool_affinity: [reddit_search, forum_search, web_search, voice_of_customer_extraction]
     primary_models: [gpt-5.5]
     fallback_models: [claude-opus-4.6, gemini-3-pro]
     verifier_models: [gpt-5.5-pro]

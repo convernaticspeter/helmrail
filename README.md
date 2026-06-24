@@ -147,6 +147,14 @@ The catalog now separates **model capabilities** from **task profiles**. Task pr
 
 Task profiles are deliberately marked with `evidence_level`. Benchmarked capabilities stay separate from heuristic domain profiles, so Helmrail does not pretend there is a public leaderboard for things like Google Ads account structure or Meta creative strategy.
 
+Task-profile route plans now include orchestration metadata:
+
+- `capability_weights` — normalized capability mix for the task (explicit per profile when curated, derived otherwise)
+- `tool_affinity` — descriptive integration/tool needs such as `google_ads_api`, `browser_devtools`, `repo_inspection`, or `reddit_search`
+- `orchestration_steps` — plan-only execution graph (`scope`, `produce`, `fallback_produce`, `verify`, `parallel_candidate`, `synthesize`, etc.) with resolved model workers
+
+These fields are intentionally side-effect-free. They describe how a future `/v1/orchestrations/run` endpoint should execute; `/v1/router/plan` still only plans.
+
 ### Policy modes
 
 ```text
