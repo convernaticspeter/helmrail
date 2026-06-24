@@ -126,8 +126,13 @@ Current coordinator flow:
 1. Resolve the fixed coordinator model (`gpt-5.5` by default, usually via OpenRouter).
 2. Run a hidden LLM planning pass — not keyword classification — to select task profile, mode, capabilities, tool affinity, and worker instructions.
 3. Resolve that LLM-selected profile into runnable worker/subscription metadata.
-4. Run the coordinator answer pass and return only the final model response.
-5. Store local trace data for future coordinator training (`training_intent: future_coordinator_model`). Nothing uploads automatically.
+4. Execute the resolved hidden worker graph:
+   - `direct` — primary worker, optional fallback/review
+   - `worker_verifier` — worker output checked by verifier; fallback worker runs when rejected/failing
+   - `race` — parallel candidates; first successful candidate wins
+   - `compare` — parallel candidates plus synthesizer
+5. Run a final hidden API-facing coordinator pass that treats the selected worker/synthesizer output as primary evidence and returns a normal `chat.completion`.
+6. Store local trace data for future coordinator training (`training_intent: future_coordinator_model`). Nothing uploads automatically.
 
 This follows the Sakana Fugu interface idea: **multi-agent system as a model**. Raw linked provider aliases still work as direct proxy models when called explicitly.
 
@@ -167,13 +172,13 @@ The catalog now separates **model capabilities** from **task profiles**. Task pr
 
 Task profiles are deliberately marked with `evidence_level`. Benchmarked capabilities stay separate from heuristic domain profiles, so Helmrail does not pretend there is a public leaderboard for things like Google Ads account structure or Meta creative strategy.
 
-Task-profile route plans now include orchestration metadata:
+Task-profile route plans include orchestration metadata:
 
 - `capability_weights` — normalized capability mix for the task (explicit per profile when curated, derived otherwise)
 - `tool_affinity` — descriptive integration/tool needs such as `google_ads_api`, `browser_devtools`, `repo_inspection`, or `reddit_search`
-- `orchestration_steps` — plan-only execution graph (`scope`, `produce`, `fallback_produce`, `verify`, `parallel_candidate`, `synthesize`, etc.) with resolved model workers
+- `orchestration_steps` — executable internal graph (`scope`, `produce`, `fallback_produce`, `verify`, `parallel_candidate`, `synthesize`, etc.) with resolved model workers
 
-These fields are intentionally side-effect-free. They describe how a future `/v1/orchestrations/run` endpoint should execute; `/v1/router/plan` still only plans.
+`/v1/router/plan` is still side-effect-free and only plans. The coordinator model path (`/v1/chat/completions` with `helmrail-coordinator`/`helmrail-auto`/`helmrail-ultra`) now executes the hidden graph and records `execution_result` in the local trace.
 
 ### Policy modes
 

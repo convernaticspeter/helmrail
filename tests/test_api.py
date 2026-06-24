@@ -548,8 +548,12 @@ def test_chat_completion_coordinator_behaves_like_model_and_collects_training_tr
                 '"worker_instructions":[{"role":"worker","goal":"Create strategy","expected_output":"plan"}],'
                 '"missing_context":["account data"],"rationale":"Google Ads task"}'
             )
+        elif "quality verifier" in system:
+            content = '{"approved": true, "confidence": 93, "issues": [], "suggestion": ""}'
+        elif "Helmrail Coordinator" in system:
+            content = "Hier ist die finalisierte Strategie basierend auf dem Worker-Output."
         else:
-            content = "Hier ist eine saubere Google-Ads-Strategie als normales Modell-Output."
+            content = "WORKER: Google Ads Strategie mit Kampagnenstruktur, Keywords und Landingpage-Hinweisen."
         return {
             "ok": True,
             "status_code": 200,
@@ -566,6 +570,7 @@ def test_chat_completion_coordinator_behaves_like_model_and_collects_training_tr
         }
 
     monkeypatch.setattr("app.orchestration.openai_compatible_chat_completion", fake_forward)
+    monkeypatch.setattr("app.engine.openai_compatible_chat_completion", fake_forward)
     response = c.post(
         "/v1/chat/completions",
         json={
@@ -578,10 +583,10 @@ def test_chat_completion_coordinator_behaves_like_model_and_collects_training_tr
     body = response.json()
     assert body["object"] == "chat.completion"
     assert body["model"] == "helmrail-coordinator"
-    assert body["choices"][0]["message"]["content"].startswith("Hier ist")
+    assert body["choices"][0]["message"]["content"].startswith("Hier ist die finalisierte")
     assert "helmrail_route" not in body
     assert "orchestration_steps" not in body
-    assert len(calls) == 2
+    assert len(calls) == 4
     assert calls[0]["api_key"] == "local-test-key"
     assert calls[0]["upstream_model"] == "openai/gpt-5.5"
 
@@ -589,11 +594,16 @@ def test_chat_completion_coordinator_behaves_like_model_and_collects_training_tr
     trace = c.get(f"/v1/traces/{run_id}").json()
     metadata = trace["metadata"]
     assert metadata["router_family"] == "llm-coordinator"
-    assert metadata["workflow_shape"] == "fugu-style-coordinator-as-model"
+    assert metadata["workflow_shape"] == "fugu-style-executed-multi-agent-as-model"
     assert metadata["paper_alignment"]["sakana_fugu"].startswith("API-facing model")
     assert metadata["paper_alignment"]["deterministic_classifier"] is False
+    assert metadata["paper_alignment"]["worker_execution"] is True
     assert metadata["coordinator_decision"]["task_profile"] == "google_ads"
     assert metadata["worker_plan"]["task_type"] == "google_ads"
+    assert metadata["execution_result"]["mode"] == "worker_verifier"
+    assert metadata["execution_result"]["success"] is True
+    assert [obs["step_id"] for obs in metadata["execution_result"]["observations"]] == ["produce", "verify"]
+    assert metadata["execution_result"]["selected_output"].startswith("WORKER:")
     assert metadata["training_intent"] == "future_coordinator_model"
 
     preview = c.post("/v1/contributions/preview", json={"run_id": run_id})
