@@ -40,6 +40,9 @@ def test_health(tmp_path):
     assert body["ok"] is True
     assert body["service"] == "helmrail"
     assert body["limits"]["max_output_tokens"] == 16384
+    profiles = {profile["id"]: profile for profile in body["model_profiles"]}
+    assert profiles["helmrail-fugu"]["limits"]["max_provider_calls"] == 8
+    assert profiles["helmrail-fugu-ultra"]["limits"]["max_provider_calls"] == 24
 
 
 def test_models(tmp_path):
@@ -48,9 +51,17 @@ def test_models(tmp_path):
     assert response.status_code == 200
     model_ids = [model["id"] for model in response.json()["data"]]
     assert "helmrail-fast" in model_ids
+    assert "helmrail-fugu" in model_ids
+    assert "helmrail-fugu-ultra" in model_ids
     assert "helmrail-ultra" in model_ids
     assert "helmrail-coordinator" in model_ids
     assert "helmrail-auto" in model_ids
+    by_id = {model["id"]: model for model in response.json()["data"]}
+    assert by_id["helmrail-fugu"]["helmrail_profile"]["tier"] == "standard"
+    assert by_id["helmrail-fugu"]["helmrail_profile"]["limits"]["max_provider_calls"] == 8
+    assert by_id["helmrail-fugu-ultra"]["helmrail_profile"]["tier"] == "ultra"
+    assert by_id["helmrail-fugu-ultra"]["helmrail_profile"]["limits"]["max_provider_calls"] == 24
+    assert by_id["helmrail-fugu-ultra"]["helmrail_profile"]["limits"]["max_output_tokens"] == 32768
 
 
 def test_chat_completion_streaming_compatibility(tmp_path):
@@ -758,6 +769,64 @@ def test_chat_completion_coordinator_behaves_like_model_and_collects_training_tr
     assert preview_body["execution"]["success"] is True
     assert preview_body["execution"]["selected_output_redacted"].startswith("WORKER:")
     assert preview_body["privacy"]["raw_trace_included"] is False
+
+
+def test_chat_completion_fugu_ultra_uses_larger_visible_model_budget(tmp_path, monkeypatch):
+    c = client(tmp_path)
+    monkeypatch.setenv("TEST_OPENROUTER_KEY", "local-test-key")
+    created = c.post(
+        "/v1/subscriptions",
+        json={
+            "provider": "openrouter",
+            "account_label": "OpenRouter API",
+            "connector_type": "api_key_env",
+            "credential_ref": "TEST_OPENROUTER_KEY",
+            "base_url": "https://openrouter.ai/api/v1",
+            "model_aliases": ["helmrail-openrouter"],
+            "metadata": {"api_style": "openai_compatible", "upstream_model": "openrouter/auto"},
+        },
+    )
+    assert created.status_code == 200
+    calls = []
+
+    def fake_forward(*, subscription, api_key, payload, upstream_model, timeout=120):
+        calls.append({"timeout": timeout, "payload": payload, "system": payload["messages"][0]["content"]})
+        system = payload["messages"][0]["content"]
+        if "Coordinator Planner" in system:
+            content = (
+                '{"task_profile":"default","mode":"direct","confidence":"high",'
+                '"capabilities":["coding"],"tool_affinity":[],"worker_instructions":[],'
+                '"missing_context":[],"rationale":"test"}'
+            )
+        elif "Helmrail Coordinator" in system:
+            content = "ULTRA FINAL"
+        else:
+            content = "ULTRA WORKER"
+        return {
+            "ok": True,
+            "status_code": 200,
+            "provider": subscription["provider"],
+            "upstream_model": upstream_model,
+            "raw": _raw_chat(content, upstream_model),
+        }
+
+    monkeypatch.setattr("app.orchestration.openai_compatible_chat_completion", fake_forward)
+    monkeypatch.setattr("app.engine.openai_compatible_chat_completion", fake_forward)
+    response = c.post(
+        "/v1/chat/completions",
+        json={"model": "helmrail-fugu-ultra", "messages": [{"role": "user", "content": "Bootstrap a new project"}]},
+    )
+    assert response.status_code == 200
+    assert response.json()["model"] == "helmrail-fugu-ultra"
+    assert calls
+    assert {call["timeout"] for call in calls} == {180}
+    assert all(call["payload"]["max_tokens"] == 32768 for call in calls)
+    run_id = response.headers["X-Helmrail-Trace-Id"]
+    trace = c.get(f"/v1/traces/{run_id}").json()
+    assert trace["metadata"]["visible_model"] == "helmrail-fugu-ultra"
+    assert trace["metadata"]["visible_model_limits"]["max_provider_calls"] == 24
+    assert trace["metadata"]["budget"]["max_provider_calls"] == 24
+    assert trace["metadata"]["budget"]["max_output_tokens"] == 32768
 
 
 def test_coordinator_budget_cap_blocks_hidden_finalizer(tmp_path, monkeypatch):

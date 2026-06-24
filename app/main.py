@@ -29,7 +29,8 @@ from .connectors import (
 from .redaction import redact_json, redact_text
 from .limits import apply_openai_output_cap
 from .model_catalog import ModelCatalog, load_catalog
-from .orchestration import is_coordinator_model, run_coordinator_chat
+from .model_profiles import is_coordinator_model, limits_for_visible_model, public_model_profile_summaries, public_model_profiles
+from .orchestration import run_coordinator_chat
 from .routing import DEFAULT_ROUTE_POLICIES, plan_route
 from .store import TraceStore
 from .ui import setup_page
@@ -135,7 +136,7 @@ def _subscription_for_model(store: TraceStore, requested_model: str) -> dict[str
         if requested_model in subscription["model_aliases"]:
             return subscription
 
-    if requested_model in {"helmrail-fast", "helmrail-ultra"}:
+    if requested_model == "helmrail-fast":
         runnable = [
             item
             for item in subscriptions
@@ -573,41 +574,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "trace_store": "sqlite",
             "auth_required": settings.require_auth,
             "limits": settings.runtime_limits().__dict__,
+            "model_profiles": public_model_profile_summaries(),
         }
 
     @app.get("/v1/models")
     def models() -> dict[str, Any]:
         created = 1760000000
-        data = [
-            {
-                "id": "helmrail-fast",
-                "object": "model",
-                "created": created,
-                "owned_by": "helmrail",
-                "description": "Low-latency Helmrail model alias; direct provider fallback while coordinator models mature.",
-            },
-            {
-                "id": "helmrail-coordinator",
-                "object": "model",
-                "created": created,
-                "owned_by": "helmrail",
-                "description": "Fugu-style API-facing coordinator model over hidden specialist routing and trace collection.",
-            },
-            {
-                "id": "helmrail-auto",
-                "object": "model",
-                "created": created,
-                "owned_by": "helmrail",
-                "description": "Alias for the Helmrail coordinator model.",
-            },
-            {
-                "id": "helmrail-ultra",
-                "object": "model",
-                "created": created,
-                "owned_by": "helmrail",
-                "description": "High-capability alias for the Helmrail coordinator model.",
-            },
-        ]
+        data = public_model_profiles(created)
         for subscription in store.list_subscriptions():
             if not subscription["enabled"]:
                 continue
@@ -917,6 +890,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def chat_completions(payload: dict[str, Any], response: Response) -> Any:
         wants_stream = bool(payload.get("stream"))
         model = str(payload.get("model") or "helmrail-fast")
+        request_limits = limits_for_visible_model(settings.runtime_limits(), model)
         messages = payload.get("messages") or []
         if not isinstance(messages, list):
             raise HTTPException(status_code=422, detail="messages must be a list")
@@ -935,7 +909,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     store.get_subscription(subscription_id) or {},
                     store.get_subscription_secret(subscription_id),
                 ),
-                limits=settings.runtime_limits(),
+                limits=request_limits,
             )
             metadata = coordinator_run.get("metadata") or {}
             if not coordinator_run.get("ok"):
@@ -980,14 +954,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             secret = resolve_secret(subscription, store.get_subscription_secret(subscription["id"]))
             if not secret:
                 raise HTTPException(status_code=422, detail=f"Model {model} has no usable API key or env var")
-            provider_payload = apply_openai_output_cap(dict(payload), settings.runtime_limits().max_output_tokens)
+            provider_payload = apply_openai_output_cap(dict(payload), request_limits.max_output_tokens)
             provider_payload.pop("stream", None)
             result = openai_compatible_chat_completion(
                 subscription=subscription,
                 api_key=secret,
                 payload=provider_payload,
                 upstream_model=upstream_model,
-                timeout=settings.runtime_limits().provider_timeout_seconds,
+                timeout=request_limits.provider_timeout_seconds,
             )
             run_id = store.save_trace(
                 endpoint="/v1/chat/completions",
@@ -1001,6 +975,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "success_signal": "provider_ok" if result.get("ok") else "provider_error",
                     "provider": subscription["provider"],
                     "upstream_model": upstream_model,
+                    "visible_model_limits": request_limits.__dict__,
                 },
             )
             response.headers["X-Helmrail-Trace-Id"] = run_id

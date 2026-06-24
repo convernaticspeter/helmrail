@@ -57,9 +57,9 @@ For internal pilot:
 
 | Alias | Suggested cap posture |
 |---|---|
-| `helmrail-fast` | direct/single-provider path where possible |
-| `helmrail-auto` / `helmrail-coordinator` | default cap: 8 calls, 3 parallel workers |
-| `helmrail-ultra` | allowed for deliberate tasks only; still capped |
+| `helmrail-fast` | direct/single-provider path where possible; standard 8-call/16k budget |
+| `helmrail-fugu` / `helmrail-auto` / `helmrail-coordinator` | standard Fugu-style model; 8 calls, 3 parallel workers, 16k output |
+| `helmrail-fugu-ultra` / `helmrail-ultra` | deliberate expensive mode for bootstraps/large coding; 24 calls, 4 parallel workers, 32k output |
 
 If a cap blocks execution, trace metadata contains `budget.provider_calls_blocked > 0`.
 
@@ -135,7 +135,7 @@ Configure a Hermes custom provider pointing at Helmrail, then test without switc
 ```bash
 hermes chat -q 'Reply with exactly: HERMES_HELMRAIL_OK' \
   --provider custom:helmrail \
-  -m helmrail-coordinator \
+  -m helmrail-fugu \
   --toolsets safe \
   -Q
 ```

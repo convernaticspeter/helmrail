@@ -115,11 +115,16 @@ Kimi coding-plan keys with the `sk-kimi-` prefix use `https://api.kimi.com/codin
 
 ## Fugu-style coordinator model
 
-Helmrail exposes coordinator aliases through the normal OpenAI-compatible `/v1/chat/completions` API:
+Helmrail exposes Fugu-style coordinator models through the normal OpenAI-compatible `/v1/chat/completions` API:
 
-- `helmrail-coordinator`
-- `helmrail-auto`
-- `helmrail-ultra`
+| Model | Use |
+|---|---|
+| `helmrail-fugu` | Standard Fugu-style visible model: hidden coordinator + worker routing with the normal request budget. |
+| `helmrail-coordinator` / `helmrail-auto` | Backward-compatible aliases for `helmrail-fugu`. |
+| `helmrail-fugu-ultra` | Ultra tier for expensive project bootstraps, complex coding, and high-stakes synthesis. |
+| `helmrail-ultra` | Backward-compatible alias for `helmrail-fugu-ultra`. |
+
+Standard uses the normal 8-call/16k-output request budget. Ultra uses a larger 24-call/32k-output budget unless the admin explicitly sets global caps via env.
 
 These behave like regular models to API clients. The response body is a normal `chat.completion`; internal routing, planner JSON, worker plan, and training metadata are stored only in the local trace store and contribution-preview path.
 
@@ -219,7 +224,7 @@ Task-profile route plans include orchestration metadata:
 - `tool_affinity` — descriptive integration/tool needs such as `google_ads_api`, `browser_devtools`, `repo_inspection`, or `reddit_search`
 - `orchestration_steps` — executable internal graph (`scope`, `produce`, `fallback_produce`, `verify`, `parallel_candidate`, `synthesize`, etc.) with resolved model workers
 
-`/v1/router/plan` is still side-effect-free and only plans. The coordinator model path (`/v1/chat/completions` with `helmrail-coordinator`/`helmrail-auto`/`helmrail-ultra`) now executes the hidden graph and records `execution_result` in the local trace.
+`/v1/router/plan` is still side-effect-free and only plans. The coordinator model path (`/v1/chat/completions` with `helmrail-fugu`/`helmrail-coordinator`/`helmrail-auto`/`helmrail-fugu-ultra`/`helmrail-ultra`) now executes the hidden graph and records `execution_result` in the local trace.
 
 ### Policy modes
 
@@ -255,10 +260,12 @@ providers:
     base_url: http://127.0.0.1:8765/v1
     key_env: HELMRAIL_API_KEY
     api_mode: chat_completions
-    model: helmrail-coordinator
+    model: helmrail-fugu
     models:
+      helmrail-fugu: {context_length: 128000}
       helmrail-coordinator: {context_length: 128000}
       helmrail-auto: {context_length: 128000}
+      helmrail-fugu-ultra: {context_length: 128000}
       helmrail-ultra: {context_length: 128000}
       helmrail-openrouter: {context_length: 128000}
       helmrail-kimi: {context_length: 262144}
@@ -269,7 +276,7 @@ Run a smoke test without switching Hermes' default provider:
 ```bash
 hermes chat -q 'Reply with exactly: HERMES_HELMRAIL_OK' \
   --provider custom:helmrail \
-  -m helmrail-openrouter \
+  -m helmrail-fugu \
   --toolsets safe \
   -Q
 ```

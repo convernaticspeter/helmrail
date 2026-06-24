@@ -9,9 +9,9 @@ from .connectors import api_style_for, openai_compatible_chat_completion
 from .engine import execute_worker_plan
 from .limits import CallBudget, RuntimeLimits, apply_openai_output_cap, budget_exhausted_result
 from .model_catalog import ModelCatalog
+from .model_profiles import is_coordinator_model
 from .routing import plan_route
 
-COORDINATOR_MODEL_ALIASES = {"helmrail-coordinator", "helmrail-auto", "helmrail-ultra"}
 COORDINATOR_MODEL_ID = "gpt-5.5"
 VALID_MODES = {"direct", "worker_verifier", "compare", "race"}
 
@@ -74,9 +74,6 @@ Rules:
 8. Preserve the user's requested language and format.
 """.strip()
 
-
-def is_coordinator_model(model: str) -> bool:
-    return model in COORDINATOR_MODEL_ALIASES
 
 
 def _extract_chat_text(body: dict[str, Any]) -> str:
@@ -427,6 +424,7 @@ def run_coordinator_chat(
             "hidden_finalizer": True,
         },
         "visible_model": visible_model,
+        "visible_model_limits": active_limits.__dict__,
         "coordinator_model": coordinator_worker.get("model_id"),
         "coordinator_upstream_model": upstream_model,
         "coordinator_provider": coordinator_subscription.get("provider"),
