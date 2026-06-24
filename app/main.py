@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import time
 from datetime import datetime, timezone
@@ -9,7 +10,7 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .config import Settings
@@ -26,6 +27,7 @@ from .connectors import (
     resolve_secret,
 )
 from .redaction import redact_json, redact_text
+from .limits import apply_openai_output_cap
 from .model_catalog import ModelCatalog, load_catalog
 from .orchestration import is_coordinator_model, run_coordinator_chat
 from .routing import DEFAULT_ROUTE_POLICIES, plan_route
@@ -169,6 +171,48 @@ def _safe_route(subscription: dict[str, Any], upstream_model: str) -> dict[str, 
         "base_url": subscription["base_url"],
         "upstream_model": upstream_model,
     }
+
+
+def _chat_completion_text(output: dict[str, Any]) -> str:
+    choices = output.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return ""
+    message = choices[0].get("message")
+    if not isinstance(message, dict):
+        return ""
+    content = message.get("content")
+    return content if isinstance(content, str) else ""
+
+
+def _stream_chat_completion(output: dict[str, Any], *, trace_id: str = "") -> StreamingResponse:
+    completion_id = str(output.get("id") or f"chatcmpl_{uuid4().hex}")
+    created = int(output.get("created") or time.time())
+    model = str(output.get("model") or "helmrail")
+    content = _chat_completion_text(output)
+
+    def events():
+        first = {
+            "id": completion_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [{"index": 0, "delta": {"role": "assistant", "content": content}, "finish_reason": None}],
+        }
+        final = {
+            "id": completion_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        }
+        yield f"data: {json.dumps(first, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps(final, ensure_ascii=False)}\n\n"
+        yield "data: [DONE]\n\n"
+
+    headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    if trace_id:
+        headers["X-Helmrail-Trace-Id"] = trace_id
+    return StreamingResponse(events(), media_type="text/event-stream", headers=headers)
 
 
 def _require_auth(settings: Settings):
@@ -528,6 +572,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "mode": "prototype-wrapper",
             "trace_store": "sqlite",
             "auth_required": settings.require_auth,
+            "limits": settings.runtime_limits().__dict__,
         }
 
     @app.get("/v1/models")
@@ -869,9 +914,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"object": "subscription.probe", "data": probe}
 
     @app.post("/v1/chat/completions", dependencies=[Depends(auth)])
-    def chat_completions(payload: dict[str, Any], response: Response) -> dict[str, Any]:
-        if payload.get("stream"):
-            raise HTTPException(status_code=400, detail="Streaming is not implemented in the prototype")
+    def chat_completions(payload: dict[str, Any], response: Response) -> Any:
+        wants_stream = bool(payload.get("stream"))
         model = str(payload.get("model") or "helmrail-fast")
         messages = payload.get("messages") or []
         if not isinstance(messages, list):
@@ -891,6 +935,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     store.get_subscription(subscription_id) or {},
                     store.get_subscription_secret(subscription_id),
                 ),
+                limits=settings.runtime_limits(),
             )
             metadata = coordinator_run.get("metadata") or {}
             if not coordinator_run.get("ok"):
@@ -902,7 +947,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     metadata=metadata,
                 )
                 response.headers["X-Helmrail-Trace-Id"] = run_id
-                raise HTTPException(status_code=int(coordinator_run.get("status_code") or 502), detail=coordinator_run.get("error") or coordinator_run)
+                raise HTTPException(
+                    status_code=int(coordinator_run.get("status_code") or 502),
+                    detail=coordinator_run.get("error") or coordinator_run,
+                    headers={"X-Helmrail-Trace-Id": run_id},
+                )
             output = coordinator_run["output"]
             run_id = store.save_trace(
                 endpoint="/v1/chat/completions",
@@ -914,6 +963,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             response.headers["X-Helmrail-Trace-Id"] = run_id
             # Fugu-style surface: return a normal chat.completion. Keep routing,
             # planner JSON, and worker graph in the local trace/contribution path.
+            if wants_stream:
+                return _stream_chat_completion(output, trace_id=run_id)
             return output
 
         subscription = _subscription_for_model(store, model)
@@ -929,11 +980,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             secret = resolve_secret(subscription, store.get_subscription_secret(subscription["id"]))
             if not secret:
                 raise HTTPException(status_code=422, detail=f"Model {model} has no usable API key or env var")
+            provider_payload = apply_openai_output_cap(dict(payload), settings.runtime_limits().max_output_tokens)
+            provider_payload.pop("stream", None)
             result = openai_compatible_chat_completion(
                 subscription=subscription,
                 api_key=secret,
-                payload=payload,
+                payload=provider_payload,
                 upstream_model=upstream_model,
+                timeout=settings.runtime_limits().provider_timeout_seconds,
             )
             run_id = store.save_trace(
                 endpoint="/v1/chat/completions",
@@ -951,12 +1005,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
             response.headers["X-Helmrail-Trace-Id"] = run_id
             if not result.get("ok"):
-                raise HTTPException(status_code=int(result.get("status_code") or 502), detail=result.get("error") or result)
+                raise HTTPException(
+                    status_code=int(result.get("status_code") or 502),
+                    detail=result.get("error") or result,
+                    headers={"X-Helmrail-Trace-Id": run_id},
+                )
             raw = result.get("raw")
             if not isinstance(raw, dict):
-                raise HTTPException(status_code=502, detail="Provider returned a non-object chat completion payload")
+                raise HTTPException(
+                    status_code=502,
+                    detail="Provider returned a non-object chat completion payload",
+                    headers={"X-Helmrail-Trace-Id": run_id},
+                )
             raw["helmrail_trace_id"] = run_id
             raw["helmrail_route"] = route
+            if wants_stream:
+                return _stream_chat_completion(raw, trace_id=run_id)
             return raw
 
         prompt = _last_user_text(messages)
@@ -996,6 +1060,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         response.headers["X-Helmrail-Trace-Id"] = run_id
         output["helmrail_trace_id"] = run_id
+        if wants_stream:
+            return _stream_chat_completion(output, trace_id=run_id)
         return output
 
     @app.post("/v1/responses", dependencies=[Depends(auth)])

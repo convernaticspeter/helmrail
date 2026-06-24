@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
 
 from .connectors import openai_compatible_chat_completion
+from .limits import CallBudget, RuntimeLimits, apply_openai_output_cap, budget_exhausted_result
 
 MAX_CONCURRENT_WORKERS = 4
 VERIFIER_CONFIDENCE_THRESHOLD = 60
@@ -104,9 +105,13 @@ def _call_provider(
     messages: list[dict[str, Any]],
     temperature: float = 0.2,
     timeout: int = 180,
+    budget: CallBudget | None = None,
 ) -> dict[str, Any]:
     """Make a single OpenAI-compatible chat/completion call."""
     subscription = worker.get("_subscription")
+    upstream_model = str(worker.get("upstream_model") or worker.get("model_id") or "")
+    if budget is not None and not budget.reserve():
+        return budget_exhausted_result(provider=str(worker.get("subscription_provider") or ""), upstream_model=upstream_model)
     if not subscription:
         return {"ok": False, "error": "No subscription resolved for this worker.", "text": "", "latency_ms": 0}
     if worker.get("api_style") and worker.get("api_style") != "openai_compatible":
@@ -127,15 +132,17 @@ def _call_provider(
             "provider": worker.get("subscription_provider"),
             "upstream_model": worker.get("upstream_model") or worker.get("model_id"),
         }
-    upstream_model = str(worker.get("upstream_model") or worker.get("model_id") or "")
     if not upstream_model:
         return {"ok": False, "error": "No upstream model for this worker.", "text": "", "latency_ms": 0}
 
-    payload = {
-        "model": upstream_model,
-        "messages": messages,
-        "temperature": temperature,
-    }
+    payload = apply_openai_output_cap(
+        {
+            "model": upstream_model,
+            "messages": messages,
+            "temperature": temperature,
+        },
+        budget.limits.max_output_tokens if budget is not None else RuntimeLimits().max_output_tokens,
+    )
     t0 = time.monotonic()
     try:
         result = openai_compatible_chat_completion(
@@ -270,6 +277,8 @@ def _execute_direct(
     messages: list[dict[str, Any]],
     get_secret: Callable[[str], str],
     subscriptions_by_id: dict[str, dict[str, Any]],
+    limits: RuntimeLimits,
+    budget: CallBudget,
 ) -> dict[str, Any]:
     workers = worker_plan.get("workers", [])
     primary = next((w for w in workers if w.get("role") == "primary"), None)
@@ -287,6 +296,8 @@ def _execute_direct(
         api_key=api_key,
         messages=messages,
         temperature=0.2,
+        timeout=limits.provider_timeout_seconds,
+        budget=budget,
     )
     observation = {
         "step_id": "execute",
@@ -309,7 +320,14 @@ def _execute_direct(
                 continue
             fb = _resolve_worker_subscription(fb, subscriptions_by_id)
             fb_key = get_secret(str(fb.get("subscription_id", "")))
-            fb_result = _call_provider(worker=fb, api_key=fb_key, messages=messages, temperature=0.2)
+            fb_result = _call_provider(
+                worker=fb,
+                api_key=fb_key,
+                messages=messages,
+                temperature=0.2,
+                timeout=limits.provider_timeout_seconds,
+                budget=budget,
+            )
             fb_obs = {
                 "step_id": "fallback",
                 "role": fb.get("role"),
@@ -341,6 +359,8 @@ def _execute_direct(
             api_key=rev_key,
             messages=review_messages,
             temperature=0.1,
+            timeout=limits.provider_timeout_seconds,
+            budget=budget,
         )
         review_decision = _json_from_text(review_result.get("text", "")) if review_result["ok"] else {}
         review_obs = {
@@ -372,6 +392,8 @@ def _execute_worker_verifier(
     messages: list[dict[str, Any]],
     get_secret: Callable[[str], str],
     subscriptions_by_id: dict[str, dict[str, Any]],
+    limits: RuntimeLimits,
+    budget: CallBudget,
 ) -> dict[str, Any]:
     workers = worker_plan.get("workers", [])
     primary = next((w for w in workers if w.get("role") == "worker" and w.get("ready")), None)
@@ -394,6 +416,8 @@ def _execute_worker_verifier(
             api_key=api_key,
             messages=messages,
             temperature=0.2,
+            timeout=limits.provider_timeout_seconds,
+            budget=budget,
         )
         work_obs = {
             "step_id": step_id,
@@ -427,6 +451,8 @@ def _execute_worker_verifier(
                 api_key=v_key,
                 messages=verify_messages,
                 temperature=0.1,
+                timeout=limits.provider_timeout_seconds,
+                budget=budget,
             )
             verdict = _json_from_text(verify_result.get("text", "")) if verify_result["ok"] else {}
             confidence = int(verdict.get("confidence", 50)) if isinstance(verdict.get("confidence"), (int, float)) else 50
@@ -470,6 +496,8 @@ def _execute_race(
     messages: list[dict[str, Any]],
     get_secret: Callable[[str], str],
     subscriptions_by_id: dict[str, dict[str, Any]],
+    limits: RuntimeLimits,
+    budget: CallBudget,
 ) -> dict[str, Any]:
     workers = [
         _resolve_worker_subscription(w, subscriptions_by_id)
@@ -485,13 +513,20 @@ def _execute_race(
 
     def _race_call(worker: dict[str, Any]) -> dict[str, Any]:
         api_key = get_secret(str(worker.get("subscription_id", "")))
-        result = _call_provider(worker=worker, api_key=api_key, messages=messages, temperature=0.2)
+        result = _call_provider(
+            worker=worker,
+            api_key=api_key,
+            messages=messages,
+            temperature=0.2,
+            timeout=limits.provider_timeout_seconds,
+            budget=budget,
+        )
         return {
             "worker": worker,
             "result": result,
         }
 
-    with ThreadPoolExecutor(max_workers=min(MAX_CONCURRENT_WORKERS, len(workers))) as pool:
+    with ThreadPoolExecutor(max_workers=min(MAX_CONCURRENT_WORKERS, limits.max_parallel_workers, len(workers))) as pool:
         futures = {pool.submit(_race_call, w): w for w in workers}
         for future in as_completed(futures):
             worker = futures[future]
@@ -543,6 +578,8 @@ def _execute_compare(
     messages: list[dict[str, Any]],
     get_secret: Callable[[str], str],
     subscriptions_by_id: dict[str, dict[str, Any]],
+    limits: RuntimeLimits,
+    budget: CallBudget,
 ) -> dict[str, Any]:
     workers = [
         _resolve_worker_subscription(w, subscriptions_by_id)
@@ -565,10 +602,17 @@ def _execute_compare(
 
     def _candidate_call(worker: dict[str, Any]) -> dict[str, Any]:
         api_key = get_secret(str(worker.get("subscription_id", "")))
-        result = _call_provider(worker=worker, api_key=api_key, messages=messages, temperature=0.2)
+        result = _call_provider(
+            worker=worker,
+            api_key=api_key,
+            messages=messages,
+            temperature=0.2,
+            timeout=limits.provider_timeout_seconds,
+            budget=budget,
+        )
         return {"worker": worker, "result": result}
 
-    with ThreadPoolExecutor(max_workers=min(MAX_CONCURRENT_WORKERS, len(workers))) as pool:
+    with ThreadPoolExecutor(max_workers=min(MAX_CONCURRENT_WORKERS, limits.max_parallel_workers, len(workers))) as pool:
         futures = {pool.submit(_candidate_call, w): w for w in workers}
         for future in as_completed(futures):
             worker = futures[future]
@@ -637,6 +681,8 @@ def _execute_compare(
         api_key=synth_key,
         messages=synth_messages,
         temperature=0.2,
+        timeout=limits.provider_timeout_seconds,
+        budget=budget,
     )
     synth_obs = {
         "step_id": "synthesize",
@@ -667,6 +713,8 @@ def execute_worker_plan(
     messages: list[dict[str, Any]],
     subscriptions: list[dict[str, Any]],
     get_secret: Callable[[str], str],
+    limits: RuntimeLimits | None = None,
+    budget: CallBudget | None = None,
 ) -> dict[str, Any]:
     """Execute the resolved worker plan from the coordinator.
 
@@ -675,32 +723,44 @@ def execute_worker_plan(
     """
     mode = str(worker_plan.get("mode") or "direct").strip().lower()
     subscriptions_by_id = {s["id"]: s for s in subscriptions}
+    active_limits = (limits or RuntimeLimits()).normalized()
+    active_budget = budget or CallBudget(active_limits)
 
     if mode == "worker_verifier":
-        return _execute_worker_verifier(
+        result = _execute_worker_verifier(
             worker_plan=worker_plan,
             messages=messages,
             get_secret=get_secret,
             subscriptions_by_id=subscriptions_by_id,
+            limits=active_limits,
+            budget=active_budget,
         )
-    if mode == "race":
-        return _execute_race(
+    elif mode == "race":
+        result = _execute_race(
             worker_plan=worker_plan,
             messages=messages,
             get_secret=get_secret,
             subscriptions_by_id=subscriptions_by_id,
+            limits=active_limits,
+            budget=active_budget,
         )
-    if mode == "compare":
-        return _execute_compare(
+    elif mode == "compare":
+        result = _execute_compare(
             worker_plan=worker_plan,
             messages=messages,
             get_secret=get_secret,
             subscriptions_by_id=subscriptions_by_id,
+            limits=active_limits,
+            budget=active_budget,
         )
-    # default = direct
-    return _execute_direct(
-        worker_plan=worker_plan,
-        messages=messages,
-        get_secret=get_secret,
-        subscriptions_by_id=subscriptions_by_id,
-    )
+    else:
+        result = _execute_direct(
+            worker_plan=worker_plan,
+            messages=messages,
+            get_secret=get_secret,
+            subscriptions_by_id=subscriptions_by_id,
+            limits=active_limits,
+            budget=active_budget,
+        )
+    result["budget"] = active_budget.snapshot()
+    return result

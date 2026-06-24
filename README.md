@@ -34,7 +34,9 @@ This repository currently contains a functional API prototype:
 - `GET /v1/traces/{run_id}`
 - `POST /v1/contributions/preview`
 
-The local build now proves the API surface, connector registry, deterministic router planning, Codex/Oracle dry-runs, OpenAI-compatible provider calls, OpenAI-compatible chat proxying for Hermes, trace store, and local redaction/contribution preview path.
+The local build now proves the API surface, connector registry, deterministic router planning, Codex/Oracle dry-runs, OpenAI-compatible provider calls, OpenAI-compatible chat proxying for Hermes, trace store, local redaction/contribution preview path, manual DB snapshots, and request-level provider-call caps.
+
+For internal operation, see [`docs/production-runbook.md`](docs/production-runbook.md).
 
 ## Link subscriptions and API providers
 

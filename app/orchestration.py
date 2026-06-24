@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from .connectors import api_style_for, openai_compatible_chat_completion
 from .engine import execute_worker_plan
+from .limits import CallBudget, RuntimeLimits, apply_openai_output_cap, budget_exhausted_result
 from .model_catalog import ModelCatalog
 from .routing import plan_route
 
@@ -234,17 +235,25 @@ def _call_openai_worker(
     upstream_model: str,
     messages: list[dict[str, Any]],
     temperature: float,
+    limits: RuntimeLimits,
+    budget: CallBudget,
 ) -> dict[str, Any]:
-    payload = {
-        "model": upstream_model,
-        "messages": messages,
-        "temperature": temperature,
-    }
+    if not budget.reserve():
+        return budget_exhausted_result(provider=str(subscription.get("provider") or ""), upstream_model=upstream_model)
+    payload = apply_openai_output_cap(
+        {
+            "model": upstream_model,
+            "messages": messages,
+            "temperature": temperature,
+        },
+        limits.max_output_tokens,
+    )
     return openai_compatible_chat_completion(
         subscription=subscription,
         api_key=api_key,
         payload=payload,
         upstream_model=upstream_model,
+        timeout=limits.provider_timeout_seconds,
     )
 
 
@@ -257,7 +266,10 @@ def run_coordinator_chat(
     catalog: ModelCatalog,
     readiness: dict[str, dict[str, Any]],
     get_secret: Callable[[str], str],
+    limits: RuntimeLimits | None = None,
 ) -> dict[str, Any]:
+    active_limits = (limits or RuntimeLimits()).normalized()
+    budget = CallBudget(active_limits)
     resolution = _coordinator_resolution(subscriptions=subscriptions, catalog=catalog, readiness=readiness)
     coordinator_worker = resolution.get("worker")
     coordinator_subscription = resolution.get("subscription")
@@ -272,6 +284,7 @@ def run_coordinator_chat(
                 "workflow_shape": "fugu-style-coordinator-as-model",
                 "success_signal": "coordinator_unavailable",
                 "coordinator_model_plan": coordinator_model_plan,
+                "budget": budget.snapshot(),
             },
         }
 
@@ -286,6 +299,7 @@ def run_coordinator_chat(
                 "workflow_shape": "fugu-style-coordinator-as-model",
                 "success_signal": "coordinator_missing_secret",
                 "coordinator_model_plan": coordinator_model_plan,
+                "budget": budget.snapshot(),
             },
         }
 
@@ -313,6 +327,8 @@ def run_coordinator_chat(
         upstream_model=upstream_model,
         messages=planning_messages,
         temperature=0.1,
+        limits=active_limits,
+        budget=budget,
     )
     raw_candidate = planning_result.get("raw")
     planner_raw: dict[str, Any] = raw_candidate if isinstance(raw_candidate, dict) else {}
@@ -341,6 +357,8 @@ def run_coordinator_chat(
         messages=messages,
         subscriptions=subscriptions,
         get_secret=get_secret,
+        limits=active_limits,
+        budget=budget,
     )
 
     answer_context = {
@@ -368,6 +386,8 @@ def run_coordinator_chat(
         upstream_model=upstream_model,
         messages=answer_messages,
         temperature=answer_temperature,
+        limits=active_limits,
+        budget=budget,
     )
     if not answer_result.get("ok"):
         return {
@@ -383,6 +403,7 @@ def run_coordinator_chat(
                 "worker_plan": worker_plan,
                 "execution_result": execution_result,
                 "planner_ok": planner_ok,
+                "budget": budget.snapshot(),
             },
         }
 
@@ -417,6 +438,7 @@ def run_coordinator_chat(
         "worker_plan": worker_plan,
         "execution_result": execution_result,
         "answer_context": answer_context,
+        "budget": budget.snapshot(),
         "planner_provider_result": {
             "ok": bool(planning_result.get("ok")),
             "status_code": planning_result.get("status_code"),

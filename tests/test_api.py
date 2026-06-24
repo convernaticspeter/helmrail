@@ -6,6 +6,17 @@ from app.config import Settings
 from app.main import create_app
 
 
+def _raw_chat(text, model="test"):
+    return {
+        "id": "chatcmpl_test",
+        "object": "chat.completion",
+        "created": 1760000000,
+        "model": model,
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+    }
+
+
 def client(tmp_path):
     app = create_app(Settings(db_path=str(tmp_path / "helmrail-test.sqlite")))
     return TestClient(app)
@@ -28,6 +39,7 @@ def test_health(tmp_path):
     body = response.json()
     assert body["ok"] is True
     assert body["service"] == "helmrail"
+    assert body["limits"]["max_output_tokens"] == 4096
 
 
 def test_models(tmp_path):
@@ -39,6 +51,19 @@ def test_models(tmp_path):
     assert "helmrail-ultra" in model_ids
     assert "helmrail-coordinator" in model_ids
     assert "helmrail-auto" in model_ids
+
+
+def test_chat_completion_streaming_compatibility(tmp_path):
+    c = client(tmp_path)
+    response = c.post(
+        "/v1/chat/completions",
+        json={"model": "helmrail-fast", "messages": [{"role": "user", "content": "Say hi"}], "stream": True},
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.headers["X-Helmrail-Trace-Id"].startswith("run_")
+    assert "chat.completion.chunk" in response.text
+    assert "data: [DONE]" in response.text
 
 
 def test_subscriptions_page(tmp_path):
@@ -701,6 +726,7 @@ def test_chat_completion_coordinator_behaves_like_model_and_collects_training_tr
     assert "orchestration_steps" not in body
     assert len(calls) == 4
     assert calls[0]["api_key"] == "local-test-key"
+    assert all(call["payload"]["max_tokens"] == 4096 for call in calls)
     assert calls[0]["upstream_model"] == "openai/gpt-5.5"
 
     run_id = response.headers["X-Helmrail-Trace-Id"]
@@ -732,6 +758,63 @@ def test_chat_completion_coordinator_behaves_like_model_and_collects_training_tr
     assert preview_body["execution"]["success"] is True
     assert preview_body["execution"]["selected_output_redacted"].startswith("WORKER:")
     assert preview_body["privacy"]["raw_trace_included"] is False
+
+
+def test_coordinator_budget_cap_blocks_hidden_finalizer(tmp_path, monkeypatch):
+    app = create_app(Settings(db_path=str(tmp_path / "budget.sqlite"), max_provider_calls=3, provider_timeout_seconds=19))
+    c = TestClient(app)
+    monkeypatch.setenv("TEST_OPENROUTER_KEY", "local-test-key")
+    created = c.post(
+        "/v1/subscriptions",
+        json={
+            "provider": "openrouter",
+            "account_label": "OpenRouter API",
+            "connector_type": "api_key_env",
+            "credential_ref": "TEST_OPENROUTER_KEY",
+            "base_url": "https://openrouter.ai/api/v1",
+            "model_aliases": ["helmrail-openrouter"],
+            "metadata": {"api_style": "openai_compatible", "upstream_model": "openrouter/auto"},
+        },
+    )
+    assert created.status_code == 200
+    calls = []
+
+    def fake_forward(*, subscription, api_key, payload, upstream_model, timeout=120):
+        calls.append({"timeout": timeout, "upstream_model": upstream_model, "payload": payload, "system": payload["messages"][0]["content"]})
+        system = payload["messages"][0]["content"]
+        if "Coordinator Planner" in system:
+            content = (
+                '{"task_profile":"google_ads","mode":"worker_verifier","confidence":"high",'
+                '"capabilities":["google_ads"],"tool_affinity":[],"worker_instructions":[],'
+                '"missing_context":[],"rationale":"test"}'
+            )
+        elif "quality verifier" in system:
+            content = '{"approved": true, "confidence": 90, "issues": [], "suggestion": ""}'
+        else:
+            content = "WORKER OUTPUT"
+        return {
+            "ok": True,
+            "status_code": 200,
+            "provider": subscription["provider"],
+            "upstream_model": upstream_model,
+            "raw": _raw_chat(content, upstream_model),
+        }
+
+    monkeypatch.setattr("app.orchestration.openai_compatible_chat_completion", fake_forward)
+    monkeypatch.setattr("app.engine.openai_compatible_chat_completion", fake_forward)
+    response = c.post(
+        "/v1/chat/completions",
+        json={"model": "helmrail-coordinator", "messages": [{"role": "user", "content": "Budget cap test"}]},
+    )
+    assert response.status_code == 429
+    assert len(calls) == 3
+    assert {call["timeout"] for call in calls} == {19}
+    assert all(call["payload"]["max_tokens"] == 4096 for call in calls)
+    run_id = response.headers["X-Helmrail-Trace-Id"]
+    trace = c.get(f"/v1/traces/{run_id}").json()
+    assert trace["metadata"]["budget"]["provider_calls_used"] == 3
+    assert trace["metadata"]["budget"]["provider_calls_blocked"] == 1
+    assert trace["metadata"]["budget"]["exhausted"] is True
 
 
 def test_chat_completion_routes_linked_openai_compatible_provider(tmp_path, monkeypatch):
@@ -782,6 +865,7 @@ def test_chat_completion_routes_linked_openai_compatible_provider(tmp_path, monk
             "model": "helmrail-kimi",
             "messages": [{"role": "user", "content": "Say PONG only"}],
             "temperature": 0,
+            "max_tokens": 999999,
         },
     )
     assert response.status_code == 200
@@ -791,6 +875,7 @@ def test_chat_completion_routes_linked_openai_compatible_provider(tmp_path, monk
     assert body["helmrail_route"]["upstream_model"] == "kimi-k2.7-code"
     assert calls[0]["api_key"] == "local-test-key"
     assert calls[0]["payload"]["model"] == "helmrail-kimi"
+    assert calls[0]["payload"]["max_tokens"] == 4096
     assert calls[0]["upstream_model"] == "kimi-k2.7-code"
 
 

@@ -7,21 +7,24 @@ Helmrail is self-hosted first. Raw traces stay local unless an admin/user explic
 1. No default upload.
 2. Redaction/anonymization runs locally.
 3. Contribution is explicit opt-in.
-4. Users can preview the bundle before anything leaves their instance.
-5. Contribution samples use a random detached sample id, not the local trace id.
+4. Users can preview/export the bundle before anything leaves their instance.
+5. Contribution samples use a random detached `sample_id`, not the local trace id.
+6. Current redaction is applied again at read/export time so older samples benefit from later hardening.
 
-## v0.1 behavior
+## Current local behavior
 
 The prototype implements:
 
 - local SQLite raw trace storage
-- deterministic redaction for common identifiers/secrets
-- contribution preview endpoint
+- automatic anonymized training samples for each saved trace
+- feedback labels on anonymized samples
+- derived preference pairs from anonymized samples
+- JSONL exports for samples and preference pairs
 - no automatic upload
 
 ## Redaction examples
 
-The preview pipeline masks:
+The preview/export pipeline masks:
 
 - email addresses
 - phone-like numbers
@@ -29,46 +32,92 @@ The preview pipeline masks:
 - OpenAI-style `sk-...` tokens
 - GitHub-style `gh*_...` tokens
 - Sakana-style `fish_...` tokens
+- structured `*-token` / `*-secret` fragments
 - common URL tracking/query secrets
 - local filesystem paths
+- internal smoke-test markers
 
-## Intended future bundle shape
+Human review remains required before any contribution/upload. Deterministic redaction is not a legal guarantee for arbitrary sensitive records.
+
+## Local records
+
+### Raw trace
+
+Raw traces are operational/debug records and may include local run IDs and internal routing details. They stay local.
+
+### Training sample
+
+Training samples are detached/anonymized records with:
 
 ```json
 {
-  "schema_version": "0.1",
+  "schema_version": "0.4",
   "sample_id": "sample_random",
   "created_at_bucket": "2026-06",
   "source": {
-    "helmrail_version": "0.1.0",
-    "contribution_mode": "manual-export-preview",
-    "consent_version": "draft-0.1"
+    "contribution_mode": "local-auto-anonymized",
+    "upload_state": "local_only_not_uploaded"
   },
   "task": {
     "category": "unknown",
-    "language": "unknown",
     "sensitivity_after_redaction": "medium-review-required"
   },
   "routing": {
-    "router_family": "prototype-deterministic",
-    "worker_classes": [],
-    "workflow_shape": "single"
+    "router_family": "llm-coordinator",
+    "workflow_shape": "fugu-style-executed-multi-agent-as-model"
   },
-  "observations": {
-    "latency_bucket": "unknown",
-    "cost_bucket": "none",
-    "tool_use_shape": "none",
-    "success_signal": "unknown",
-    "failure_mode": "unknown"
+  "privacy": {
+    "contains_local_run_id": false,
+    "raw_trace_included": false,
+    "review_required_before_upload": true
   }
 }
 ```
 
-## Non-goals in v0.1
+### Feedback label
+
+Feedback labels attach to samples, not raw traces:
+
+- `accepted`
+- `rejected`
+- `edited`
+- `user_corrected`
+- `good`
+- `bad`
+- `partial`
+- `unknown`
+
+Corrections, notes, and metadata are redacted before storage.
+
+### Preference pair
+
+Preference pairs are derived only from anonymized samples:
+
+- `verifier`: accepted worker output > rejected worker output
+- `synthesizer`: synthesized output > candidate output
+- `race_winner`: first successful race output > non-winner output as operational signal
+- `human_feedback`: corrected human output > selected/final model output
+
+Preference pairs must not require or emit local raw trace IDs.
+
+## Endpoints
+
+```text
+GET  /v1/training-samples
+GET  /v1/training-samples/{sample_id}
+GET  /v1/training-exports/jsonl
+POST /v1/training-samples/{sample_id}/feedback
+GET  /v1/training-samples/{sample_id}/feedback
+GET  /v1/training-samples/{sample_id}/preference-pairs
+GET  /v1/training-preference-pairs
+GET  /v1/training-preference-exports/jsonl
+POST /v1/contributions/preview
+```
+
+## Non-goals in the internal pilot
 
 - no automatic upload
 - no hosted contribution account
-- no training
+- no public training data intake
 - no claim that deterministic redaction is sufficient for all sensitive data
-
-Human review remains required before contribution.
+- no irreversible detachment/upload workflow yet

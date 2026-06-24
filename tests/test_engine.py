@@ -1,4 +1,5 @@
 from app.engine import execute_worker_plan
+from app.limits import RuntimeLimits
 
 
 def _subscription(subscription_id="sub_openrouter"):
@@ -145,3 +146,28 @@ def test_engine_compare_synthesizes_candidates(monkeypatch):
     assert result["synthesized"] is True
     assert [obs["step_id"] for obs in result["observations"]].count("parallel_candidate") == 2
     assert result["observations"][-1]["step_id"] == "synthesize"
+
+
+def test_engine_budget_caps_provider_calls_before_optional_review(monkeypatch):
+    calls = []
+
+    def fake_forward(*, subscription, api_key, payload, upstream_model, timeout=120):
+        calls.append({"payload": payload, "timeout": timeout, "upstream_model": upstream_model})
+        return {"ok": True, "status_code": 200, "provider": subscription["provider"], "upstream_model": upstream_model, "raw": _raw("PRIMARY OUTPUT")}
+
+    monkeypatch.setattr("app.engine.openai_compatible_chat_completion", fake_forward)
+    result = execute_worker_plan(
+        worker_plan={"mode": "direct", "workers": [_worker("primary", "gpt-5.5"), _worker("verifier", "claude-opus-4.6")]},
+        messages=[{"role": "user", "content": "Do it"}],
+        subscriptions=[_subscription()],
+        get_secret=lambda _: "secret",
+        limits=RuntimeLimits(max_provider_calls=1, provider_timeout_seconds=17),
+    )
+    assert result["success"] is True
+    assert result["selected_output"] == "PRIMARY OUTPUT"
+    assert len(calls) == 1
+    assert calls[0]["timeout"] == 17
+    assert calls[0]["payload"]["max_tokens"] == 4096
+    assert result["budget"]["provider_calls_used"] == 1
+    assert result["budget"]["provider_calls_blocked"] == 1
+    assert result["budget"]["exhausted"] is True
