@@ -341,6 +341,84 @@ def test_router_plan_fast_mode_races_ready_api_workers(tmp_path, monkeypatch):
     assert candidate_models == ["glm-5.2", "kimi-k2.7-code", "claude-sonnet-4.6"]
 
 
+def test_router_catalog_exposes_task_profiles(tmp_path):
+    c = client(tmp_path)
+    response = c.get("/v1/router/catalog")
+    assert response.status_code == 200
+    body = response.json()
+    profile_ids = {profile["id"] for profile in body["task_profiles"]}
+    assert "system_architecture" in profile_ids
+    assert "conversion_tracking_setup" in profile_ids
+    assert "google_ads" in profile_ids
+    assert "meta_ads" in profile_ids
+    assert "linkedin_social" in profile_ids
+    assert "scientific_research" in profile_ids
+    assert "market_research_forums" in profile_ids
+    assert "growth_marketing" in body["capability_taxonomy"]
+    assert len(profile_ids) >= 30
+
+
+def test_router_auto_classifies_domain_task_profiles(tmp_path, monkeypatch):
+    c = client(tmp_path)
+    monkeypatch.setenv("TEST_OPENROUTER_KEY", "local-test-key")
+    assert c.post(
+        "/v1/subscriptions",
+        json={
+            "provider": "openrouter",
+            "account_label": "OpenRouter API",
+            "connector_type": "api_key_env",
+            "credential_ref": "TEST_OPENROUTER_KEY",
+            "base_url": "https://openrouter.ai/api/v1",
+            "model_aliases": ["helmrail-openrouter"],
+            "metadata": {"api_style": "openai_compatible", "upstream_model": "openrouter/auto"},
+        },
+    ).status_code == 200
+
+    cases = [
+        ("Bitte erstelle eine Google Ads Keyword Strategie mit RSA Ideen.", "google_ads", "paid_media"),
+        ("Wir brauchen ein UI/UX Konzept für die neue Checkout-Seite.", "ui_ux_design", "design"),
+        ("Plane organischen LinkedIn Content für B2B Founder.", "linkedin_social", "organic_social"),
+        ("Mach Market Research in Reddit und Foren zu diesem Problem.", "market_research_forums", "research"),
+    ]
+    for prompt, expected_task, expected_domain in cases:
+        response = c.post("/v1/router/plan", json={"prompt": prompt})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["task_type"] == expected_task
+        assert body["task_profile"]["id"] == expected_task
+        assert body["task_profile"]["domain"] == expected_domain
+        assert body["ready"] is True
+        assert body["selected_worker"]["route_via"] == "openrouter"
+
+
+def test_router_explicit_profile_for_conversion_tracking(tmp_path, monkeypatch):
+    c = client(tmp_path)
+    monkeypatch.setenv("TEST_OPENROUTER_KEY", "local-test-key")
+    assert c.post(
+        "/v1/subscriptions",
+        json={
+            "provider": "openrouter",
+            "account_label": "OpenRouter API",
+            "connector_type": "api_key_env",
+            "credential_ref": "TEST_OPENROUTER_KEY",
+            "base_url": "https://openrouter.ai/api/v1",
+            "model_aliases": ["helmrail-openrouter"],
+            "metadata": {"api_style": "openai_compatible", "upstream_model": "openrouter/auto"},
+        },
+    ).status_code == 200
+
+    response = c.post(
+        "/v1/router/plan",
+        json={"task_type": "conversion_tracking_setup", "prompt": "GA4 + GTM + Meta Pixel sauber einrichten"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["task_type"] == "conversion_tracking_setup"
+    assert body["mode"] == "worker_verifier"
+    assert body["policy"]["required_capabilities"] == ["conversion_tracking_setup", "analytics_instrumentation", "coding"]
+    assert [worker["model_id"] for worker in body["workers"]] == ["gpt-5.5", "kimi-k2.7-code", "claude-opus-4.6"]
+
+
 def test_chat_completion_creates_trace_and_contribution_preview(tmp_path):
     c = client(tmp_path)
     response = c.post(

@@ -133,6 +133,20 @@ The model catalog (`data/model_catalog.yaml`) defines capabilities grounded in 2
 | `glm-5.2` | ZHIPU | coding, general | LiveBench Coding 79.65 |
 | `kimi-k2.7-code` | Moonshot | coding | Kimi Coding Plan specialist |
 
+### Task profiles
+
+The catalog now separates **model capabilities** from **task profiles**. Task profiles describe real work categories and map them to capability combinations + model mixes. The current catalog includes 32 profiles across:
+
+- Architecture: `system_architecture`, `process_architecture`, `cloud_architecture`, `network_infrastructure`
+- Development: `frontend_development`, `backend_development`, `ui_ux_design`
+- Growth/marketing: `copywriting`, `conversion_optimization`, `strategy_positioning`, `ads_creative`
+- Analytics/tracking: `data_analysis`, `conversion_tracking_setup`
+- Paid media: `google_ads`, `meta_ads`, `bing_ads`, `tiktok_ads`
+- Organic social: `linkedin_social`, `x_social`, `instagram_social`, `tiktok_social`, `youtube_social`, `facebook_social`, `pinterest_social`, `reddit_social`, `threads_social`, `bluesky_social`
+- Editorial/research: `editorial_planning`, `journalistic_research`, `scientific_research`, `osint`, `market_research_forums`
+
+Task profiles are deliberately marked with `evidence_level`. Benchmarked capabilities stay separate from heuristic domain profiles, so Helmrail does not pretend there is a public leaderboard for things like Google Ads account structure or Meta creative strategy.
+
 ### Policy modes
 
 ```text
@@ -221,11 +235,10 @@ export HELMRAIL_REQUIRE_AUTH=true
 
 Then call:
 
-```bash
-curl http://localhost:8000/v1/responses \
-  -H 'Authorization: Bearer test-token' \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"helmrail-fast","input":"Hello"}'
+```text
+POST /v1/responses
+Authorization: Bearer test-token
+{"model":"helmrail-fast","input":"Hello"}
 ```
 
 ## Local traces and contribution preview

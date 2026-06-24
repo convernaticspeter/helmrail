@@ -1,9 +1,13 @@
 # Helmrail Model Registry - Phase 1
-# Benchmark-grounded capability tags (June 2026)
+# Benchmark-grounded model tags + heuristic task profiles (June 2026)
 
 metadata:
-  version: 1
-  description: Benchmark-validated model capabilities
+  version: 2
+  description: Benchmark-validated model capabilities plus human-curated task profiles for routing.
+  routing_principles:
+    - Model capabilities are properties of models and should be grounded in benchmarks where possible.
+    - Task profiles are domain/workflow categories and may be heuristic when no public benchmark exists.
+    - Policies reference real model IDs, then Helmrail resolves each model to the best available subscription.
   sources:
     - name: DeepSWE
       url: https://phly95.github.io/deepswe-interactive-report/
@@ -30,6 +34,54 @@ metadata:
       url: https://aider.chat/docs/leaderboards/
       date: 2025-06
 
+capability_taxonomy:
+  core:
+    - reasoning
+    - coding
+    - creative_writing
+    - visual_reasoning
+    - long_context
+    - data_analysis
+    - research_synthesis
+    - strategic_reasoning
+  architecture:
+    - system_architecture
+    - process_architecture
+    - cloud_architecture
+    - network_infrastructure
+  development:
+    - frontend_development
+    - backend_development
+    - technical_implementation
+    - debugging
+  growth_marketing:
+    - copywriting
+    - conversion_optimization
+    - strategy_positioning
+    - paid_media
+    - conversion_tracking_setup
+    - analytics_instrumentation
+  platform_marketing:
+    - google_ads
+    - meta_ads
+    - bing_ads
+    - tiktok_ads
+    - linkedin_social
+    - x_social
+    - instagram_social
+    - tiktok_social
+    - youtube_social
+    - facebook_social
+    - pinterest_social
+    - reddit_social
+    - threads_social
+    - bluesky_social
+  research:
+    - journalistic_research
+    - scientific_research
+    - osint
+    - market_research_forums
+
 models:
   gpt-5.5:
     provider: openai
@@ -38,6 +90,14 @@ models:
       - reasoning
       - general
       - math
+      - system_architecture
+      - backend_development
+      - frontend_development
+      - cloud_architecture
+      - data_analysis
+      - conversion_tracking_setup
+      - research_synthesis
+      - strategic_reasoning
     benchmarks:
       deepswe:
         score: 0.692
@@ -56,13 +116,19 @@ models:
       livebench_math:
         score: 96.32
         source: LiveBench Global
+    evidence_level: benchmark
     notes: Top performer across coding, reasoning, and general tasks. DeepSWE #1.
-    
+
   gpt-5.5-pro:
     provider: openai
     capabilities:
       - reasoning
       - coding
+      - strategic_reasoning
+      - system_architecture
+      - process_architecture
+      - scientific_research
+      - osint
     benchmarks:
       arc_agi_1:
         score: 0.965
@@ -72,16 +138,26 @@ models:
         score: 0.846
         rank: 1
         source: ARC-AGI
-    notes: ARC-AGI champion. Requires oracle_browser connector (Hermes /pro command).
-    
+    evidence_level: benchmark
+    notes: ARC-AGI champion. Requires oracle_browser connector unless reachable through OpenRouter.
+
   claude-opus-4.6:
     provider: anthropic
     capabilities:
       - reasoning
       - general
       - creative_writing
+      - copywriting
+      - ui_ux_design
+      - strategy_positioning
+      - conversion_optimization
+      - system_architecture
+      - process_architecture
       - coding
       - agentic
+      - visual_reasoning
+      - editorial_planning
+      - research_synthesis
     benchmarks:
       chatbot_arena_text:
         elo: 1499
@@ -99,22 +175,33 @@ models:
         score: 0.756
         rank: 4
         source: SWE-bench Verified
-    notes: Strong all-rounder, excels in creative writing and agentic tasks.
-    
+    evidence_level: benchmark
+    notes: Strong all-rounder, excels in creative writing, strategy, architecture, and agentic review.
+
   claude-sonnet-4.6:
     provider: anthropic
     capabilities:
       - general
       - coding
+      - copywriting
+      - frontend_development
+      - backend_development
+      - fast
     benchmarks:
       notes: Mid-tier Claude variant. Cost-effective for general work.
+    evidence_level: inferred
     notes: Faster and cheaper than Opus. Good for straightforward tasks.
-    
+
   gemini-3-pro:
     provider: google
     capabilities:
       - general
       - creative_writing
+      - ui_ux_design
+      - visual_reasoning
+      - social_content
+      - long_context
+      - research_synthesis
     benchmarks:
       chatbot_arena_text:
         elo: 1486
@@ -124,13 +211,18 @@ models:
         elo: 1485
         rank: 4
         source: Chatbot Arena Creative Writing
-    notes: Competitive with Claude in general and creative tasks.
-    
+    evidence_level: benchmark
+    notes: Competitive with Claude in general, visual, long-context, and creative tasks.
+
   glm-5.2:
     provider: zhipu
     capabilities:
       - coding
       - general
+      - fast
+      - data_analysis
+      - backend_development
+      - technical_implementation
     benchmarks:
       livebench_global:
         score: 76.24
@@ -145,12 +237,404 @@ models:
       livebench_math:
         score: 89.78
         source: LiveBench Global
+    evidence_level: benchmark
     notes: Strong coding capability via LiveBench (79.65). Very cost-effective via Z.ai.
-    
+
   kimi-k2.7-code:
     provider: moonshot
     capabilities:
       - coding
+      - frontend_development
+      - backend_development
+      - technical_implementation
+      - debugging
+      - fast
     benchmarks:
       notes: Specialized coding model from Kimi Coding Plan subscription.
+    evidence_level: inferred
     notes: Purpose-built for code. Available via Kimi Coding Plan API.
+
+task_profiles:
+  system_architecture:
+    label: System Architecture
+    domain: architecture
+    mode: worker_verifier
+    required_capabilities: [system_architecture, reasoning, technical_implementation]
+    helpful_capabilities: [backend_development, cloud_architecture, security_review]
+    primary_models: [claude-opus-4.6]
+    fallback_models: [gpt-5.5]
+    verifier_models: [gpt-5.5-pro]
+    evidence_level: heuristic_plus_reasoning_benchmarks
+    keywords: [system architecture, system design, architecture, architektur, api design, technical design, scalable, skalierbar]
+
+  process_architecture:
+    label: Process Architecture
+    domain: architecture
+    mode: worker_verifier
+    required_capabilities: [process_architecture, strategic_reasoning]
+    helpful_capabilities: [operations_design, automation_design]
+    primary_models: [claude-opus-4.6]
+    fallback_models: [gpt-5.5]
+    verifier_models: [gpt-5.5-pro]
+    evidence_level: heuristic_plus_reasoning_benchmarks
+    keywords: [process architecture, process design, prozess, workflow, operating model, sop, automation process]
+
+  cloud_architecture:
+    label: Cloud Architecture
+    domain: architecture
+    mode: worker_verifier
+    required_capabilities: [cloud_architecture, system_architecture, reasoning]
+    helpful_capabilities: [network_infrastructure, backend_development, security_review]
+    primary_models: [gpt-5.5]
+    fallback_models: [claude-opus-4.6, glm-5.2]
+    verifier_models: [gpt-5.5-pro]
+    evidence_level: heuristic_plus_reasoning_benchmarks
+    keywords: [cloud architecture, aws, azure, gcp, kubernetes, k8s, serverless, deployment architecture, infra]
+
+  network_infrastructure:
+    label: Network Infrastructure
+    domain: architecture
+    mode: worker_verifier
+    required_capabilities: [network_infrastructure, system_architecture, reasoning]
+    helpful_capabilities: [cloud_architecture, security_review]
+    primary_models: [gpt-5.5]
+    fallback_models: [claude-opus-4.6, glm-5.2]
+    verifier_models: [gpt-5.5-pro]
+    evidence_level: heuristic_plus_reasoning_benchmarks
+    keywords: [network, networking, dns, vlan, firewall, reverse proxy, vpn, tailscale, wireguard, router, netzwerk]
+
+  frontend_development:
+    label: Frontend Development
+    domain: development
+    mode: worker_verifier
+    required_capabilities: [frontend_development, coding, ui_ux_design]
+    helpful_capabilities: [debugging, visual_reasoning]
+    primary_models: [gpt-5.5]
+    fallback_models: [kimi-k2.7-code, glm-5.2]
+    verifier_models: [claude-opus-4.6]
+    evidence_level: benchmark_plus_heuristic
+    keywords: [frontend, react, next.js, nextjs, vue, svelte, css, tailwind, component, ui implementation]
+
+  backend_development:
+    label: Backend Development
+    domain: development
+    mode: worker_verifier
+    required_capabilities: [backend_development, coding, system_architecture]
+    helpful_capabilities: [debugging, api_design, data_modeling]
+    primary_models: [gpt-5.5]
+    fallback_models: [kimi-k2.7-code, glm-5.2]
+    verifier_models: [claude-opus-4.6]
+    evidence_level: benchmark_plus_heuristic
+    keywords: [backend, api, database, postgres, sql, fastapi, node, express, convex, authentication, auth]
+
+  ui_ux_design:
+    label: UI/UX Design
+    domain: design
+    mode: direct
+    required_capabilities: [ui_ux_design, visual_reasoning, strategic_reasoning]
+    helpful_capabilities: [conversion_optimization, frontend_development]
+    primary_models: [claude-opus-4.6]
+    fallback_models: [gemini-3-pro, gpt-5.5]
+    verifier_models: [gpt-5.5-pro]
+    evidence_level: heuristic_plus_creative_and_vision_benchmarks
+    keywords: [ui, ux, product design, interface, design system, wireframe, usability, user experience, layout]
+
+  copywriting:
+    label: Copywriting
+    domain: growth_marketing
+    mode: direct
+    required_capabilities: [copywriting, creative_writing, strategy_positioning]
+    helpful_capabilities: [conversion_optimization, audience_research]
+    primary_models: [claude-opus-4.6]
+    fallback_models: [gemini-3-pro, gpt-5.5]
+    verifier_models: [gpt-5.5-pro]
+    evidence_level: creative_writing_benchmark_plus_heuristic
+    keywords: [copywriting, copy, headline, landing page copy, sales page, offer copy, werbetext, texten]
+
+  conversion_optimization:
+    label: Conversion Optimization
+    domain: growth_marketing
+    mode: compare
+    required_capabilities: [conversion_optimization, strategic_reasoning, copywriting]
+    helpful_capabilities: [data_analysis, ui_ux_design]
+    primary_models: [claude-opus-4.6, gpt-5.5, gemini-3-pro]
+    fallback_models: [glm-5.2]
+    verifier_models: [gpt-5.5-pro]
+    evidence_level: heuristic_plus_strategy_benchmarks
+    keywords: [cro, conversion, conversion rate, landing page audit, funnel audit, lp audit, ab test, a/b test]
+
+  strategy_positioning:
+    label: Strategy & Positioning
+    domain: growth_marketing
+    mode: worker_verifier
+    required_capabilities: [strategy_positioning, strategic_reasoning, market_research]
+    helpful_capabilities: [copywriting, process_architecture]
+    primary_models: [claude-opus-4.6]
+    fallback_models: [gpt-5.5]
+    verifier_models: [gpt-5.5-pro]
+    evidence_level: heuristic_plus_reasoning_benchmarks
+    keywords: [strategy, positioning, positionierung, brand strategy, messaging, offer strategy, go to market, gtm]
+
+  data_analysis:
+    label: Data Analysis
+    domain: analytics
+    mode: worker_verifier
+    required_capabilities: [data_analysis, reasoning, math]
+    helpful_capabilities: [python, statistics, visualization]
+    primary_models: [gpt-5.5]
+    fallback_models: [glm-5.2, claude-opus-4.6]
+    verifier_models: [gpt-5.5-pro]
+    evidence_level: benchmark_plus_heuristic
+    keywords: [data analysis, daten analyse, spreadsheet, csv, statistik, dashboard, cohort, regression, analyse]
+
+  conversion_tracking_setup:
+    label: Conversion Tracking Setup
+    domain: analytics
+    mode: worker_verifier
+    required_capabilities: [conversion_tracking_setup, analytics_instrumentation, coding]
+    helpful_capabilities: [google_ads, meta_ads, tag_manager, frontend_development]
+    primary_models: [gpt-5.5]
+    fallback_models: [kimi-k2.7-code, glm-5.2]
+    verifier_models: [claude-opus-4.6]
+    evidence_level: heuristic_plus_coding_benchmarks
+    keywords: [conversion tracking, tracking setup, gtm, tag manager, ga4, google analytics, pixel, tag, enhanced conversions, server-side tracking]
+
+  google_ads:
+    label: Google Ads
+    domain: paid_media
+    mode: worker_verifier
+    required_capabilities: [google_ads, paid_media, conversion_optimization]
+    helpful_capabilities: [copywriting, data_analysis, conversion_tracking_setup]
+    primary_models: [gpt-5.5]
+    fallback_models: [claude-opus-4.6, gemini-3-pro]
+    verifier_models: [gpt-5.5-pro]
+    evidence_level: heuristic_domain_profile
+    keywords: [google ads, adwords, search campaign, rsa, pmax, performance max, keywords, keyword strategy]
+
+  meta_ads:
+    label: Meta Ads
+    domain: paid_media
+    mode: worker_verifier
+    required_capabilities: [meta_ads, paid_media, creative_strategy]
+    helpful_capabilities: [copywriting, conversion_optimization, data_analysis]
+    primary_models: [claude-opus-4.6]
+    fallback_models: [gpt-5.5, gemini-3-pro]
+    verifier_models: [gpt-5.5-pro]
+    evidence_level: heuristic_domain_profile
+    keywords: [meta ads, facebook ads, instagram ads, ad set, creative testing, paid social]
+
+  bing_ads:
+    label: Bing Ads / Microsoft Ads
+    domain: paid_media
+    mode: worker_verifier
+    required_capabilities: [bing_ads, paid_media, conversion_optimization]
+    helpful_capabilities: [copywriting, data_analysis, google_ads]
+    primary_models: [gpt-5.5]
+    fallback_models: [claude-opus-4.6, gemini-3-pro]
+    verifier_models: [gpt-5.5-pro]
+    evidence_level: heuristic_domain_profile
+    keywords: [bing ads, microsoft ads, microsoft advertising, bing campaign]
+
+  tiktok_ads:
+    label: TikTok Ads
+    domain: paid_media
+    mode: worker_verifier
+    required_capabilities: [tiktok_ads, paid_media, creative_strategy]
+    helpful_capabilities: [copywriting, social_content, conversion_optimization]
+    primary_models: [gemini-3-pro]
+    fallback_models: [claude-opus-4.6, gpt-5.5]
+    verifier_models: [gpt-5.5-pro]
+    evidence_level: heuristic_domain_profile
+    keywords: [tiktok ads, tik tok ads, spark ads, tiktok campaign, short form ads]
+
+  ads_creative:
+    label: Ad Creative
+    domain: paid_media
+    mode: compare
+    required_capabilities: [copywriting, creative_strategy, conversion_optimization]
+    helpful_capabilities: [visual_reasoning, platform_marketing]
+    primary_models: [claude-opus-4.6, gemini-3-pro, gpt-5.5]
+    fallback_models: []
+    verifier_models: [gpt-5.5-pro]
+    evidence_level: creative_writing_benchmark_plus_heuristic
+    keywords: [ad creative, ad copy, creative angle, hook, ad script, creative test]
+
+  editorial_planning:
+    label: Editorial Planning
+    domain: content
+    mode: worker_verifier
+    required_capabilities: [editorial_planning, strategic_reasoning, creative_writing]
+    helpful_capabilities: [research_synthesis, platform_marketing]
+    primary_models: [claude-opus-4.6]
+    fallback_models: [gpt-5.5, gemini-3-pro]
+    verifier_models: [gpt-5.5-pro]
+    evidence_level: heuristic_plus_creative_benchmarks
+    keywords: [editorial calendar, redaktionsplan, redaktionsplanung, content calendar, content plan, publishing schedule]
+
+  journalistic_research:
+    label: Journalistic Research
+    domain: research
+    mode: worker_verifier
+    required_capabilities: [journalistic_research, research_synthesis, reasoning]
+    helpful_capabilities: [source_verification, long_context]
+    primary_models: [gpt-5.5]
+    fallback_models: [claude-opus-4.6, gemini-3-pro]
+    verifier_models: [gpt-5.5-pro]
+    evidence_level: heuristic_plus_reasoning_benchmarks
+    keywords: [journalistic research, journalistische recherche, fact check, source check, investigative, reportage]
+
+  scientific_research:
+    label: Scientific Research
+    domain: research
+    mode: worker_verifier
+    required_capabilities: [scientific_research, research_synthesis, reasoning]
+    helpful_capabilities: [long_context, data_analysis, citation_review]
+    primary_models: [gpt-5.5-pro]
+    fallback_models: [gpt-5.5, claude-opus-4.6]
+    verifier_models: [claude-opus-4.6]
+    evidence_level: reasoning_benchmarks_plus_heuristic
+    keywords: [scientific research, wissenschaftliche recherche, paper, arxiv, literature review, studie, peer reviewed]
+
+  osint:
+    label: OSINT
+    domain: research
+    mode: worker_verifier
+    required_capabilities: [osint, research_synthesis, reasoning]
+    helpful_capabilities: [source_verification, market_research_forums]
+    primary_models: [gpt-5.5]
+    fallback_models: [claude-opus-4.6]
+    verifier_models: [gpt-5.5-pro]
+    evidence_level: heuristic_plus_reasoning_benchmarks
+    keywords: [osint, open source intelligence, domain intel, passive recon, subdomains, footprint, investigation]
+
+  market_research_forums:
+    label: Market Research in Forums / Reddit
+    domain: research
+    mode: worker_verifier
+    required_capabilities: [market_research_forums, research_synthesis, strategy_positioning]
+    helpful_capabilities: [copywriting, audience_research]
+    primary_models: [gpt-5.5]
+    fallback_models: [claude-opus-4.6, gemini-3-pro]
+    verifier_models: [gpt-5.5-pro]
+    evidence_level: heuristic_plus_reasoning_benchmarks
+    keywords: [reddit research, forum research, market research, marktrecherche, customer voice, voice of customer, voc, forum, reddit]
+
+  linkedin_social:
+    label: LinkedIn Organic Social
+    domain: organic_social
+    mode: direct
+    required_capabilities: [linkedin_social, copywriting, strategy_positioning]
+    helpful_capabilities: [editorial_planning, thought_leadership]
+    primary_models: [claude-opus-4.6]
+    fallback_models: [gpt-5.5, gemini-3-pro]
+    verifier_models: [gpt-5.5-pro]
+    evidence_level: heuristic_domain_profile
+    keywords: [linkedin, linkedin post, linkedin content, b2b social, thought leadership]
+
+  x_social:
+    label: X / Twitter Organic Social
+    domain: organic_social
+    mode: direct
+    required_capabilities: [x_social, copywriting, editorial_planning]
+    helpful_capabilities: [strategy_positioning, news_sense]
+    primary_models: [claude-opus-4.6]
+    fallback_models: [gpt-5.5, gemini-3-pro]
+    verifier_models: [gpt-5.5-pro]
+    evidence_level: heuristic_domain_profile
+    keywords: [twitter, x post, tweet, thread, xitter]
+
+  instagram_social:
+    label: Instagram Organic Social
+    domain: organic_social
+    mode: direct
+    required_capabilities: [instagram_social, social_content, copywriting]
+    helpful_capabilities: [visual_reasoning, editorial_planning]
+    primary_models: [gemini-3-pro]
+    fallback_models: [claude-opus-4.6, gpt-5.5]
+    verifier_models: [gpt-5.5-pro]
+    evidence_level: heuristic_domain_profile
+    keywords: [instagram, reel, reels, carousel, caption, stories, instagram content]
+
+  tiktok_social:
+    label: TikTok Organic Social
+    domain: organic_social
+    mode: direct
+    required_capabilities: [tiktok_social, social_content, creative_strategy]
+    helpful_capabilities: [copywriting, visual_reasoning]
+    primary_models: [gemini-3-pro]
+    fallback_models: [claude-opus-4.6, gpt-5.5]
+    verifier_models: [gpt-5.5-pro]
+    evidence_level: heuristic_domain_profile
+    keywords: [tiktok, tik tok, short form, short-form, tiktok content, video hook]
+
+  youtube_social:
+    label: YouTube Organic Social
+    domain: organic_social
+    mode: direct
+    required_capabilities: [youtube_social, editorial_planning, creative_strategy]
+    helpful_capabilities: [copywriting, research_synthesis]
+    primary_models: [gemini-3-pro]
+    fallback_models: [claude-opus-4.6, gpt-5.5]
+    verifier_models: [gpt-5.5-pro]
+    evidence_level: heuristic_domain_profile
+    keywords: [youtube, youtube video, video script, thumbnail, youtube content, shorts]
+
+  facebook_social:
+    label: Facebook Organic Social
+    domain: organic_social
+    mode: direct
+    required_capabilities: [facebook_social, copywriting, community_marketing]
+    helpful_capabilities: [editorial_planning, social_content]
+    primary_models: [claude-opus-4.6]
+    fallback_models: [gpt-5.5, gemini-3-pro]
+    verifier_models: [gpt-5.5-pro]
+    evidence_level: heuristic_domain_profile
+    keywords: [facebook organic, facebook post, facebook group, facebook content]
+
+  pinterest_social:
+    label: Pinterest Organic Social
+    domain: organic_social
+    mode: direct
+    required_capabilities: [pinterest_social, visual_reasoning, copywriting]
+    helpful_capabilities: [seo_content, social_content]
+    primary_models: [gemini-3-pro]
+    fallback_models: [claude-opus-4.6, gpt-5.5]
+    verifier_models: [gpt-5.5-pro]
+    evidence_level: heuristic_domain_profile
+    keywords: [pinterest, pin, pinterest content, pinterest seo]
+
+  reddit_social:
+    label: Reddit Organic Social
+    domain: organic_social
+    mode: worker_verifier
+    required_capabilities: [reddit_social, community_marketing, market_research_forums]
+    helpful_capabilities: [copywriting, audience_research]
+    primary_models: [gpt-5.5]
+    fallback_models: [claude-opus-4.6]
+    verifier_models: [gpt-5.5-pro]
+    evidence_level: heuristic_domain_profile
+    keywords: [reddit, subreddit, reddit post, reddit community]
+
+  threads_social:
+    label: Threads Organic Social
+    domain: organic_social
+    mode: direct
+    required_capabilities: [threads_social, copywriting, social_content]
+    helpful_capabilities: [editorial_planning]
+    primary_models: [claude-opus-4.6]
+    fallback_models: [gpt-5.5, gemini-3-pro]
+    verifier_models: [gpt-5.5-pro]
+    evidence_level: heuristic_domain_profile
+    keywords: [threads, threads post, meta threads]
+
+  bluesky_social:
+    label: Bluesky Organic Social
+    domain: organic_social
+    mode: direct
+    required_capabilities: [bluesky_social, copywriting, social_content]
+    helpful_capabilities: [editorial_planning]
+    primary_models: [claude-opus-4.6]
+    fallback_models: [gpt-5.5, gemini-3-pro]
+    verifier_models: [gpt-5.5-pro]
+    evidence_level: heuristic_domain_profile
+    keywords: [bluesky, bsky, bluesky post]

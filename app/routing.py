@@ -81,19 +81,29 @@ HIGH_CONFIDENCE_HINTS = (
 )
 
 
-def classify_task(prompt: str, requested: str = "auto") -> str:
+def classify_task(prompt: str, requested: str = "auto", catalog: ModelCatalog | None = None) -> str:
     """Determine task type from prompt text or explicit request.
-    
+
     Priority:
-    1. Explicit task_type override
-    2. Keyword matching (coding > reasoning > creative > high_confidence > cheap > fast)
-    3. Default
+    1. Explicit task_type override (built-in policy or catalog task profile)
+    2. Catalog task-profile keyword matching
+    3. Built-in generic keyword matching
+    4. Default
     """
     explicit = (requested or "auto").strip().lower().replace("-", "_")
     if explicit and explicit != "auto":
-        return explicit if explicit in DEFAULT_ROUTE_POLICIES else "default"
+        if explicit in DEFAULT_ROUTE_POLICIES:
+            return explicit
+        if catalog and catalog.get_task_profile(explicit):
+            return explicit
+        return "default"
 
     text = (prompt or "").lower()
+    if catalog:
+        matched_profile = catalog.match_task_profile(text)
+        if matched_profile:
+            return matched_profile
+
     if any(hint in text for hint in CODING_HINTS):
         return "coding"
     if any(hint in text for hint in REASONING_HINTS):
@@ -107,6 +117,55 @@ def classify_task(prompt: str, requested: str = "auto") -> str:
     if any(hint in text for hint in FAST_HINTS):
         return "fast"
     return "default"
+
+
+def _policy_from_task_profile(profile_id: str, profile: dict[str, Any]) -> dict[str, Any]:
+    """Build an executable route policy from a catalog task profile."""
+    mode = str(profile.get("mode") or "direct").strip().lower().replace("-", "_")
+    primary_models = [str(model) for model in (profile.get("primary_models") or []) if str(model).strip()]
+    fallback_models = [str(model) for model in (profile.get("fallback_models") or []) if str(model).strip()]
+    verifier_models = [str(model) for model in (profile.get("verifier_models") or []) if str(model).strip()]
+
+    policy: dict[str, Any] = {
+        "mode": mode,
+        "task_profile_id": profile_id,
+        "label": profile.get("label", profile_id),
+        "domain": profile.get("domain", ""),
+        "required_capabilities": profile.get("required_capabilities", []),
+        "helpful_capabilities": profile.get("helpful_capabilities", []),
+        "evidence_level": profile.get("evidence_level", "heuristic_domain_profile"),
+        "reason": profile.get("reason") or f"Task profile '{profile_id}' selected from catalog taxonomy.",
+    }
+
+    if mode == "worker_verifier":
+        policy["worker"] = primary_models[0] if primary_models else "gpt-5.5"
+        if fallback_models:
+            policy["fallback_worker"] = fallback_models[0]
+        if verifier_models:
+            policy["verifier"] = verifier_models[0]
+    elif mode in {"race", "compare"}:
+        candidates = [*primary_models, *fallback_models]
+        policy["candidates"] = candidates or ["gpt-5.5", "claude-opus-4.6"]
+        if verifier_models:
+            policy["synthesizer"] = verifier_models[0]
+    else:
+        policy["primary"] = primary_models[0] if primary_models else "gpt-5.5"
+        policy["fallbacks"] = [*primary_models[1:], *fallback_models]
+        if verifier_models:
+            policy["verifier"] = verifier_models[0]
+    return policy
+
+
+def _policy_for_task(task_type: str, catalog: ModelCatalog) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Resolve task type to a route policy and optional task-profile metadata."""
+    if task_type in DEFAULT_ROUTE_POLICIES:
+        return dict(DEFAULT_ROUTE_POLICIES[task_type]), None
+
+    profile = catalog.get_task_profile(task_type)
+    if profile:
+        return _policy_from_task_profile(task_type, profile), {"id": task_type, **profile}
+
+    return dict(DEFAULT_ROUTE_POLICIES["default"]), None
 
 
 # --- Model-to-Subscription Resolution ---
@@ -347,8 +406,8 @@ def plan_route(
     readiness: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     readiness = readiness or {}
-    resolved_task = classify_task(prompt, task_type)
-    policy = dict(DEFAULT_ROUTE_POLICIES.get(resolved_task) or DEFAULT_ROUTE_POLICIES["default"])
+    resolved_task = classify_task(prompt, task_type, catalog=catalog)
+    policy, task_profile = _policy_for_task(resolved_task, catalog)
     if mode:
         policy["mode"] = mode.strip().lower().replace("-", "_")
     resolved_mode = str(policy["mode"])
@@ -405,5 +464,6 @@ def plan_route(
         "ready": bool(selected and selected.get("ready")),
         "confidence": confidence,
         "policy": policy,
+        "task_profile": task_profile,
         "explanation": policy.get("reason", "Deterministic policy selected from task type and model catalog."),
     }

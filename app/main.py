@@ -564,7 +564,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/v1/router/catalog", dependencies=[Depends(auth)])
     def router_catalog() -> dict[str, Any]:
-        return {"object": "router.catalog", "models": catalog.list_models(), "capabilities": catalog.list_capabilities(), "metadata": catalog.get_metadata()}
+        return {
+            "object": "router.catalog",
+            "models": catalog.list_models(),
+            "capabilities": catalog.list_capabilities(),
+            "capability_taxonomy": catalog.get_capability_taxonomy(),
+            "task_profiles": catalog.list_task_profiles(),
+            "metadata": catalog.get_metadata(),
+        }
 
     @app.post("/v1/router/plan", dependencies=[Depends(auth)])
     def router_plan(request: RouterPlanRequest, response: Response) -> dict[str, Any]:
