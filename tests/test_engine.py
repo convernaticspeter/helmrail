@@ -167,7 +167,7 @@ def test_engine_budget_caps_provider_calls_before_optional_review(monkeypatch):
     assert result["selected_output"] == "PRIMARY OUTPUT"
     assert len(calls) == 1
     assert calls[0]["timeout"] == 17
-    assert calls[0]["payload"]["max_tokens"] == 4096
+    assert calls[0]["payload"]["max_tokens"] == 16384
     assert result["budget"]["provider_calls_used"] == 1
     assert result["budget"]["provider_calls_blocked"] == 1
     assert result["budget"]["exhausted"] is True

@@ -8,7 +8,7 @@ services:
       HELMRAIL_MAX_PROVIDER_CALLS: 8
       HELMRAIL_MAX_PARALLEL_WORKERS: 3
       HELMRAIL_PROVIDER_TIMEOUT_SECONDS: 120
-      HELMRAIL_MAX_OUTPUT_TOKENS: 4096
+      HELMRAIL_MAX_OUTPUT_TOKENS: 16384
       # Set HELMRAIL_API_KEY to require bearer auth for /v1/* mutation endpoints.
       # HELMRAIL_API_KEY: change-me
     volumes:

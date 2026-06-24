@@ -21,7 +21,7 @@ Returns service status, auth state, and runtime caps:
     "max_provider_calls": 8,
     "max_parallel_workers": 3,
     "provider_timeout_seconds": 120,
-    "max_output_tokens": 4096
+    "max_output_tokens": 16384
   }
 }
 ```

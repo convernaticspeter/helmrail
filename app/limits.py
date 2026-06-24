@@ -17,14 +17,14 @@ class RuntimeLimits:
     max_provider_calls: int = 8
     max_parallel_workers: int = 3
     provider_timeout_seconds: int = 120
-    max_output_tokens: int = 4096
+    max_output_tokens: int = 16384
 
     def normalized(self) -> "RuntimeLimits":
         return RuntimeLimits(
             max_provider_calls=max(1, min(int(self.max_provider_calls), 32)),
             max_parallel_workers=max(1, min(int(self.max_parallel_workers), 8)),
             provider_timeout_seconds=max(5, min(int(self.provider_timeout_seconds), 600)),
-            max_output_tokens=max(256, min(int(self.max_output_tokens), 32768)),
+            max_output_tokens=max(256, min(int(self.max_output_tokens), 65536)),
         )
 
 

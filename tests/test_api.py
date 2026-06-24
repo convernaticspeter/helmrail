@@ -39,7 +39,7 @@ def test_health(tmp_path):
     body = response.json()
     assert body["ok"] is True
     assert body["service"] == "helmrail"
-    assert body["limits"]["max_output_tokens"] == 4096
+    assert body["limits"]["max_output_tokens"] == 16384
 
 
 def test_models(tmp_path):
@@ -726,7 +726,7 @@ def test_chat_completion_coordinator_behaves_like_model_and_collects_training_tr
     assert "orchestration_steps" not in body
     assert len(calls) == 4
     assert calls[0]["api_key"] == "local-test-key"
-    assert all(call["payload"]["max_tokens"] == 4096 for call in calls)
+    assert all(call["payload"]["max_tokens"] == 16384 for call in calls)
     assert calls[0]["upstream_model"] == "openai/gpt-5.5"
 
     run_id = response.headers["X-Helmrail-Trace-Id"]
@@ -809,7 +809,7 @@ def test_coordinator_budget_cap_blocks_hidden_finalizer(tmp_path, monkeypatch):
     assert response.status_code == 429
     assert len(calls) == 3
     assert {call["timeout"] for call in calls} == {19}
-    assert all(call["payload"]["max_tokens"] == 4096 for call in calls)
+    assert all(call["payload"]["max_tokens"] == 16384 for call in calls)
     run_id = response.headers["X-Helmrail-Trace-Id"]
     trace = c.get(f"/v1/traces/{run_id}").json()
     assert trace["metadata"]["budget"]["provider_calls_used"] == 3
@@ -875,7 +875,7 @@ def test_chat_completion_routes_linked_openai_compatible_provider(tmp_path, monk
     assert body["helmrail_route"]["upstream_model"] == "kimi-k2.7-code"
     assert calls[0]["api_key"] == "local-test-key"
     assert calls[0]["payload"]["model"] == "helmrail-kimi"
-    assert calls[0]["payload"]["max_tokens"] == 4096
+    assert calls[0]["payload"]["max_tokens"] == 16384
     assert calls[0]["upstream_model"] == "kimi-k2.7-code"
 
 

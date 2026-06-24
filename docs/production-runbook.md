@@ -35,14 +35,14 @@ Expected `/health` basics:
     "max_provider_calls": 8,
     "max_parallel_workers": 3,
     "provider_timeout_seconds": 120,
-    "max_output_tokens": 4096
+    "max_output_tokens": 16384
   }
 }
 ```
 
 ## Runtime caps
 
-Caps are intentionally simple. They prevent one user-facing request from silently fanning out into too many paid upstream model calls.
+Caps are intentionally simple. They prevent one user-facing request from silently fanning out into too many paid upstream model calls. The default output cap is deliberately roomy (`16384`); if a deliberate task needs more and the provider credit limit allows it, raise `HELMRAIL_MAX_OUTPUT_TOKENS` up to `65536`.
 
 Configured via env:
 
@@ -50,7 +50,7 @@ Configured via env:
 HELMRAIL_MAX_PROVIDER_CALLS=8
 HELMRAIL_MAX_PARALLEL_WORKERS=3
 HELMRAIL_PROVIDER_TIMEOUT_SECONDS=120
-HELMRAIL_MAX_OUTPUT_TOKENS=4096
+HELMRAIL_MAX_OUTPUT_TOKENS=16384
 ```
 
 For internal pilot:

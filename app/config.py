@@ -29,7 +29,7 @@ class Settings:
     max_provider_calls: int = 8
     max_parallel_workers: int = 3
     provider_timeout_seconds: int = 120
-    max_output_tokens: int = 4096
+    max_output_tokens: int = 16384
 
     def runtime_limits(self) -> RuntimeLimits:
         return RuntimeLimits(
@@ -53,5 +53,5 @@ class Settings:
             max_provider_calls=_int_env("HELMRAIL_MAX_PROVIDER_CALLS", 8),
             max_parallel_workers=_int_env("HELMRAIL_MAX_PARALLEL_WORKERS", 3),
             provider_timeout_seconds=_int_env("HELMRAIL_PROVIDER_TIMEOUT_SECONDS", 120),
-            max_output_tokens=_int_env("HELMRAIL_MAX_OUTPUT_TOKENS", 4096),
+            max_output_tokens=_int_env("HELMRAIL_MAX_OUTPUT_TOKENS", 16384),
         )
