@@ -1039,11 +1039,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Trace not found")
         return trace
 
+    @app.get("/v1/training-samples", dependencies=[Depends(auth)])
+    def training_samples(limit: int = 25) -> dict[str, Any]:
+        return {"object": "list", "data": store.list_training_samples(limit=limit)}
+
+    @app.get("/v1/training-samples/{sample_id}", dependencies=[Depends(auth)])
+    def training_sample_detail(sample_id: str) -> dict[str, Any]:
+        sample = store.get_training_sample(sample_id)
+        if sample is None:
+            raise HTTPException(status_code=404, detail="Training sample not found")
+        return sample
+
     @app.post("/v1/contributions/preview", dependencies=[Depends(auth)])
     def contribution_preview(request: ContributionPreviewRequest) -> dict[str, Any]:
         trace = store.get_trace(request.run_id)
         if trace is None:
             raise HTTPException(status_code=404, detail="Trace not found")
+        stored_sample = store.get_training_sample_for_run(request.run_id)
+        if stored_sample is not None:
+            return stored_sample["sample"]
         created_at = trace["created_at"]
         month_bucket = created_at[:7] if created_at else datetime.now(timezone.utc).strftime("%Y-%m")
         input_redacted = redact_json(trace["input"])

@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from .training import build_training_sample
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -48,6 +50,18 @@ class TraceStore:
                     model TEXT NOT NULL,
                     input_json TEXT NOT NULL,
                     output_json TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS training_samples (
+                    sample_id TEXT PRIMARY KEY,
+                    created_at TEXT NOT NULL,
+                    run_id TEXT NOT NULL UNIQUE,
+                    schema_version TEXT NOT NULL,
+                    sample_json TEXT NOT NULL,
                     metadata_json TEXT NOT NULL
                 )
                 """
@@ -103,6 +117,38 @@ class TraceStore:
                     json.dumps(metadata or {}, ensure_ascii=False),
                 ),
             )
+            sample_id = f"sample_{uuid4().hex}"
+            sample = build_training_sample(
+                sample_id=sample_id,
+                created_at=created_at,
+                endpoint=endpoint,
+                model=model,
+                input_payload=input_payload,
+                output_payload=output_payload,
+                metadata=metadata or {},
+            )
+            conn.execute(
+                """
+                INSERT INTO training_samples (sample_id, created_at, run_id, schema_version, sample_json, metadata_json)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    sample_id,
+                    created_at,
+                    run_id,
+                    str(sample.get("schema_version") or "unknown"),
+                    json.dumps(sample, ensure_ascii=False),
+                    json.dumps(
+                        {
+                            "run_id": run_id,
+                            "endpoint": endpoint,
+                            "model": model,
+                            "source": "auto_generated_from_local_trace",
+                        },
+                        ensure_ascii=False,
+                    ),
+                ),
+            )
             conn.commit()
         return run_id
 
@@ -138,6 +184,40 @@ class TraceStore:
             }
             for row in rows
         ]
+
+    def _training_sample_from_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        sample = json.loads(row["sample_json"])
+        return {
+            "sample_id": row["sample_id"],
+            "created_at": row["created_at"],
+            "schema_version": row["schema_version"],
+            "sample": sample,
+        }
+
+    def list_training_samples(self, limit: int = 25) -> list[dict[str, Any]]:
+        limit = max(1, min(limit, 100))
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT sample_id, created_at, schema_version, sample_json FROM training_samples ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [self._training_sample_from_row(row) for row in rows]
+
+    def get_training_sample(self, sample_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT sample_id, created_at, schema_version, sample_json FROM training_samples WHERE sample_id = ?",
+                (sample_id,),
+            ).fetchone()
+        return None if row is None else self._training_sample_from_row(row)
+
+    def get_training_sample_for_run(self, run_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT sample_id, created_at, schema_version, sample_json FROM training_samples WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+        return None if row is None else self._training_sample_from_row(row)
 
     def create_subscription(
         self,

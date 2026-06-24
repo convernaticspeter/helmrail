@@ -214,10 +214,12 @@ def test_subscription_endpoints_require_auth_when_enabled(tmp_path):
     assert c.get("/v1/oracle/status").status_code == 401
     assert c.get("/v1/router/policies").status_code == 401
     assert c.get("/v1/router/catalog").status_code == 401
+    assert c.get("/v1/training-samples").status_code == 401
     assert c.post("/v1/router/plan", json={"prompt": "hi"}).status_code == 401
     assert c.get("/v1/subscriptions", headers={"Authorization": "Bearer secret"}).status_code == 200
     assert c.get("/v1/router/policies", headers={"Authorization": "Bearer secret"}).status_code == 200
     assert c.get("/v1/router/catalog", headers={"Authorization": "Bearer secret"}).status_code == 200
+    assert c.get("/v1/training-samples", headers={"Authorization": "Bearer secret"}).status_code == 200
 
 
 def test_router_plan_selects_coding_worker_verifier_flow(tmp_path, monkeypatch):
@@ -512,10 +514,27 @@ def test_chat_completion_creates_trace_and_contribution_preview(tmp_path):
 
     preview = c.post("/v1/contributions/preview", json={"run_id": run_id})
     assert preview.status_code == 200
-    preview_text = str(preview.json())
+    preview_body = preview.json()
+    preview_text = str(preview_body)
     assert "peter@example.com" not in preview_text
+    assert run_id not in preview_text
     assert "[EMAIL_REDACTED]" in preview_text
     assert "[SECRET_REDACTED]" in preview_text
+    assert preview_body["source"]["contribution_mode"] == "local-auto-anonymized"
+    assert preview_body["privacy"]["raw_trace_included"] is False
+    assert preview_body["privacy"]["contains_local_run_id"] is False
+
+    samples = c.get("/v1/training-samples").json()["data"]
+    assert len(samples) == 1
+    sample_id = samples[0]["sample_id"]
+    detail = c.get(f"/v1/training-samples/{sample_id}")
+    assert detail.status_code == 200
+    detail_body = detail.json()
+    detail_text = str(detail_body)
+    assert "peter@example.com" not in detail_text
+    assert run_id not in detail_text
+    assert "[EMAIL_REDACTED]" in detail_text
+    assert detail_body["sample"]["sample_id"] == sample_id
 
 
 def test_chat_completion_coordinator_behaves_like_model_and_collects_training_trace(tmp_path, monkeypatch):
@@ -608,11 +627,17 @@ def test_chat_completion_coordinator_behaves_like_model_and_collects_training_tr
 
     preview = c.post("/v1/contributions/preview", json={"run_id": run_id})
     assert preview.status_code == 200
-    preview_text = str(preview.json())
+    preview_body = preview.json()
+    preview_text = str(preview_body)
     assert "peter@example.com" not in preview_text
+    assert run_id not in preview_text
     assert "[EMAIL_REDACTED]" in preview_text
     assert "[SECRET_REDACTED]" in preview_text
     assert "future_coordinator_model" in preview_text
+    assert preview_body["routing"]["workflow_shape"] == "fugu-style-executed-multi-agent-as-model"
+    assert preview_body["execution"]["success"] is True
+    assert preview_body["execution"]["selected_output_redacted"].startswith("WORKER:")
+    assert preview_body["privacy"]["raw_trace_included"] is False
 
 
 def test_chat_completion_routes_linked_openai_compatible_provider(tmp_path, monkeypatch):

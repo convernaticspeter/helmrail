@@ -132,9 +132,35 @@ Current coordinator flow:
    - `race` — parallel candidates; first successful candidate wins
    - `compare` — parallel candidates plus synthesizer
 5. Run a final hidden API-facing coordinator pass that treats the selected worker/synthesizer output as primary evidence and returns a normal `chat.completion`.
-6. Store local trace data for future coordinator training (`training_intent: future_coordinator_model`). Nothing uploads automatically.
+6. Store raw local trace data for debugging/deletion and immediately create a separate anonymized local training sample (`training_intent: future_coordinator_model`). Nothing uploads automatically.
 
 This follows the Sakana Fugu interface idea: **multi-agent system as a model**. Raw linked provider aliases still work as direct proxy models when called explicitly.
+
+### Automatic anonymized training samples
+
+Every `save_trace()` now writes two local records:
+
+1. Raw trace in `traces` — local-only operational/debug record.
+2. Redacted training sample in `training_samples` — random `sample_id`, coarse month bucket, no local `run_id` inside the sample JSON, deterministic redaction applied to inputs, outputs, coordinator decisions, worker plans, and execution observations.
+
+Training samples include:
+
+- task/profile/mode metadata
+- hidden coordinator decision
+- resolved worker plan
+- actual worker/verifier/synthesizer observations, redacted
+- selected worker output, redacted
+- final output, redacted
+- success/failure signal and latency bucket
+- privacy flags (`raw_trace_included: false`, `contains_local_run_id: false`)
+
+Endpoints:
+
+- `GET /v1/training-samples` — list local anonymized samples
+- `GET /v1/training-samples/{sample_id}` — inspect one anonymized sample
+- `POST /v1/contributions/preview` — returns the stored anonymized sample for a run when available
+
+No export/upload happens automatically. Samples are local training-corpus artifacts ready for human review or later explicit export.
 
 ## Router planning
 
