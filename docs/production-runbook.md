@@ -58,10 +58,12 @@ For internal pilot:
 | Alias | Suggested cap posture |
 |---|---|
 | `helmrail-fast` | direct/single-provider path where possible; standard 8-call/16k budget |
-| `helmrail-fugu` / `helmrail-auto` / `helmrail-coordinator` | standard Fugu-style model; 8 calls, 3 parallel workers, 16k output |
-| `helmrail-fugu-ultra` / `helmrail-ultra` | deliberate expensive mode for bootstraps/large coding; 24 calls, 4 parallel workers, 32k output |
+| `helmrail-standard` / `helmrail-auto` / `helmrail-coordinator` | standard coordinator model; 8 calls, 3 parallel workers, 16k output |
+| `helmrail-ultra` | deliberate expensive mode for bootstraps/large coding; 24 calls, 4 parallel workers, 32k output |
 
 If a cap blocks execution, trace metadata contains `budget.provider_calls_blocked > 0`.
+
+Simple browser/UI operation belongs to `browser_operations`: direct `glm-5.2` primary via the cheapest available route, with Sonnet/Kimi fallbacks. Do not route plain click/form/navigation work to Ultra/frontier models unless the task also needs design judgment, account analysis, or high-stakes verification.
 
 ## Pre-update snapshot, not backup theater
 
@@ -135,7 +137,7 @@ Configure a Hermes custom provider pointing at Helmrail, then test without switc
 ```bash
 hermes chat -q 'Reply with exactly: HERMES_HELMRAIL_OK' \
   --provider custom:helmrail \
-  -m helmrail-fugu \
+  -m helmrail-standard \
   --toolsets safe \
   -Q
 ```

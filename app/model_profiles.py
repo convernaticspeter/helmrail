@@ -18,6 +18,12 @@ class VisibleModelProfile:
 
 
 DEFAULT_LIMITS = RuntimeLimits().normalized()
+ULTRA_LIMITS = RuntimeLimits(
+    max_provider_calls=24,
+    max_parallel_workers=4,
+    provider_timeout_seconds=180,
+    max_output_tokens=32768,
+).normalized()
 
 VISIBLE_MODEL_PROFILES: dict[str, VisibleModelProfile] = {
     "helmrail-fast": VisibleModelProfile(
@@ -27,50 +33,33 @@ VISIBLE_MODEL_PROFILES: dict[str, VisibleModelProfile] = {
         description="Low-latency Helmrail alias; direct provider fallback with standard request limits.",
         limits=DEFAULT_LIMITS,
     ),
-    "helmrail-fugu": VisibleModelProfile(
-        id="helmrail-fugu",
+    "helmrail-standard": VisibleModelProfile(
+        id="helmrail-standard",
         route="coordinator",
         tier="standard",
-        description="Fugu-style Helmrail model: hidden coordinator + worker routing with standard cost/latency budget.",
+        description="Standard Helmrail model: hidden coordinator and worker routing with standard cost/latency budget.",
         limits=DEFAULT_LIMITS,
     ),
     "helmrail-coordinator": VisibleModelProfile(
         id="helmrail-coordinator",
         route="coordinator",
         tier="standard",
-        description="Alias for helmrail-fugu.",
+        description="Alias for helmrail-standard.",
         limits=DEFAULT_LIMITS,
     ),
     "helmrail-auto": VisibleModelProfile(
         id="helmrail-auto",
         route="coordinator",
         tier="standard",
-        description="Alias for helmrail-fugu.",
+        description="Alias for helmrail-standard.",
         limits=DEFAULT_LIMITS,
-    ),
-    "helmrail-fugu-ultra": VisibleModelProfile(
-        id="helmrail-fugu-ultra",
-        route="coordinator",
-        tier="ultra",
-        description="Fugu Ultra-style Helmrail model: larger hidden-agent budget for bootstraps, complex coding, and high-stakes synthesis.",
-        limits=RuntimeLimits(
-            max_provider_calls=24,
-            max_parallel_workers=4,
-            provider_timeout_seconds=180,
-            max_output_tokens=32768,
-        ).normalized(),
     ),
     "helmrail-ultra": VisibleModelProfile(
         id="helmrail-ultra",
         route="coordinator",
         tier="ultra",
-        description="Alias for helmrail-fugu-ultra.",
-        limits=RuntimeLimits(
-            max_provider_calls=24,
-            max_parallel_workers=4,
-            provider_timeout_seconds=180,
-            max_output_tokens=32768,
-        ).normalized(),
+        description="Ultra Helmrail model: larger hidden-agent budget for bootstraps, complex coding, and high-stakes synthesis.",
+        limits=ULTRA_LIMITS,
     ),
 }
 

@@ -41,8 +41,8 @@ def test_health(tmp_path):
     assert body["service"] == "helmrail"
     assert body["limits"]["max_output_tokens"] == 16384
     profiles = {profile["id"]: profile for profile in body["model_profiles"]}
-    assert profiles["helmrail-fugu"]["limits"]["max_provider_calls"] == 8
-    assert profiles["helmrail-fugu-ultra"]["limits"]["max_provider_calls"] == 24
+    assert profiles["helmrail-standard"]["limits"]["max_provider_calls"] == 8
+    assert profiles["helmrail-ultra"]["limits"]["max_provider_calls"] == 24
 
 
 def test_models(tmp_path):
@@ -51,17 +51,16 @@ def test_models(tmp_path):
     assert response.status_code == 200
     model_ids = [model["id"] for model in response.json()["data"]]
     assert "helmrail-fast" in model_ids
-    assert "helmrail-fugu" in model_ids
-    assert "helmrail-fugu-ultra" in model_ids
+    assert "helmrail-standard" in model_ids
     assert "helmrail-ultra" in model_ids
     assert "helmrail-coordinator" in model_ids
     assert "helmrail-auto" in model_ids
     by_id = {model["id"]: model for model in response.json()["data"]}
-    assert by_id["helmrail-fugu"]["helmrail_profile"]["tier"] == "standard"
-    assert by_id["helmrail-fugu"]["helmrail_profile"]["limits"]["max_provider_calls"] == 8
-    assert by_id["helmrail-fugu-ultra"]["helmrail_profile"]["tier"] == "ultra"
-    assert by_id["helmrail-fugu-ultra"]["helmrail_profile"]["limits"]["max_provider_calls"] == 24
-    assert by_id["helmrail-fugu-ultra"]["helmrail_profile"]["limits"]["max_output_tokens"] == 32768
+    assert by_id["helmrail-standard"]["helmrail_profile"]["tier"] == "standard"
+    assert by_id["helmrail-standard"]["helmrail_profile"]["limits"]["max_provider_calls"] == 8
+    assert by_id["helmrail-ultra"]["helmrail_profile"]["tier"] == "ultra"
+    assert by_id["helmrail-ultra"]["helmrail_profile"]["limits"]["max_provider_calls"] == 24
+    assert by_id["helmrail-ultra"]["helmrail_profile"]["limits"]["max_output_tokens"] == 32768
 
 
 def test_chat_completion_streaming_compatibility(tmp_path):
@@ -413,6 +412,7 @@ def test_router_catalog_exposes_task_profiles(tmp_path):
     assert "linkedin_social" in profile_ids
     assert "scientific_research" in profile_ids
     assert "market_research_forums" in profile_ids
+    assert "browser_operations" in profile_ids
     assert "growth_marketing" in body["capability_taxonomy"]
     assert len(profile_ids) >= 30
 
@@ -436,6 +436,7 @@ def test_router_auto_classifies_domain_task_profiles(tmp_path, monkeypatch):
     cases = [
         ("Bitte erstelle eine Google Ads Keyword Strategie mit RSA Ideen.", "google_ads", "paid_media"),
         ("Wir brauchen ein UI/UX Konzept für die neue Checkout-Seite.", "ui_ux_design", "design"),
+        ("Bitte den Browser bedienen: öffne die Website, klicke den Login und fülle das Formular aus.", "browser_operations", "automation"),
         ("Plane organischen LinkedIn Content für B2B Founder.", "linkedin_social", "organic_social"),
         ("Mach Market Research in Reddit und Foren zu diesem Problem.", "market_research_forums", "research"),
     ]
@@ -448,6 +449,41 @@ def test_router_auto_classifies_domain_task_profiles(tmp_path, monkeypatch):
         assert body["task_profile"]["domain"] == expected_domain
         assert body["ready"] is True
         assert body["selected_worker"]["route_via"] == "openrouter"
+
+
+def test_router_browser_operations_use_cheap_fast_worker(tmp_path, monkeypatch):
+    c = client(tmp_path)
+    monkeypatch.setenv("TEST_OPENROUTER_KEY", "local-test-key")
+    assert c.post(
+        "/v1/subscriptions",
+        json={
+            "provider": "openrouter",
+            "account_label": "OpenRouter API",
+            "connector_type": "api_key_env",
+            "credential_ref": "TEST_OPENROUTER_KEY",
+            "base_url": "https://openrouter.ai/api/v1",
+            "model_aliases": ["helmrail-openrouter"],
+            "metadata": {"api_style": "openai_compatible", "upstream_model": "openrouter/auto"},
+        },
+    ).status_code == 200
+
+    response = c.post(
+        "/v1/router/plan",
+        json={"prompt": "Browser bedienen: öffne Safari, klicke Login und fülle ein Formular aus."},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["task_type"] == "browser_operations"
+    assert body["mode"] == "direct"
+    assert body["selected_worker"]["model_id"] == "glm-5.2"
+    assert body["selected_worker"]["route_via"] == "openrouter"
+    assert body["selected_worker"]["upstream_model"] == "zhipu/glm-5.2"
+    assert body["policy"]["primary"] == "glm-5.2"
+    assert body["policy"]["fallbacks"] == ["claude-sonnet-4.6", "kimi-k2.7-code"]
+    assert body["capability_weights"]["browser_automation"] == 0.5
+    assert "browser_control" in body["tool_affinity"]
+    assert "form_fill" in body["tool_affinity"]
+    assert [step["id"] for step in body["orchestration_steps"]] == ["execute"]
 
 
 def test_router_explicit_profile_for_conversion_tracking(tmp_path, monkeypatch):
@@ -744,8 +780,8 @@ def test_chat_completion_coordinator_behaves_like_model_and_collects_training_tr
     trace = c.get(f"/v1/traces/{run_id}").json()
     metadata = trace["metadata"]
     assert metadata["router_family"] == "llm-coordinator"
-    assert metadata["workflow_shape"] == "fugu-style-executed-multi-agent-as-model"
-    assert metadata["paper_alignment"]["sakana_fugu"].startswith("API-facing model")
+    assert metadata["workflow_shape"] == "coordinator-executed-multi-agent-as-model"
+    assert metadata["paper_alignment"]["model_as_orchestrator"].startswith("API-facing model")
     assert metadata["paper_alignment"]["deterministic_classifier"] is False
     assert metadata["paper_alignment"]["worker_execution"] is True
     assert metadata["coordinator_decision"]["task_profile"] == "google_ads"
@@ -765,13 +801,13 @@ def test_chat_completion_coordinator_behaves_like_model_and_collects_training_tr
     assert "[EMAIL_REDACTED]" in preview_text
     assert "[SECRET_REDACTED]" in preview_text
     assert "future_coordinator_model" in preview_text
-    assert preview_body["routing"]["workflow_shape"] == "fugu-style-executed-multi-agent-as-model"
+    assert preview_body["routing"]["workflow_shape"] == "coordinator-executed-multi-agent-as-model"
     assert preview_body["execution"]["success"] is True
     assert preview_body["execution"]["selected_output_redacted"].startswith("WORKER:")
     assert preview_body["privacy"]["raw_trace_included"] is False
 
 
-def test_chat_completion_fugu_ultra_uses_larger_visible_model_budget(tmp_path, monkeypatch):
+def test_chat_completion_ultra_uses_larger_visible_model_budget(tmp_path, monkeypatch):
     c = client(tmp_path)
     monkeypatch.setenv("TEST_OPENROUTER_KEY", "local-test-key")
     created = c.post(
@@ -814,16 +850,16 @@ def test_chat_completion_fugu_ultra_uses_larger_visible_model_budget(tmp_path, m
     monkeypatch.setattr("app.engine.openai_compatible_chat_completion", fake_forward)
     response = c.post(
         "/v1/chat/completions",
-        json={"model": "helmrail-fugu-ultra", "messages": [{"role": "user", "content": "Bootstrap a new project"}]},
+        json={"model": "helmrail-ultra", "messages": [{"role": "user", "content": "Bootstrap a new project"}]},
     )
     assert response.status_code == 200
-    assert response.json()["model"] == "helmrail-fugu-ultra"
+    assert response.json()["model"] == "helmrail-ultra"
     assert calls
     assert {call["timeout"] for call in calls} == {180}
     assert all(call["payload"]["max_tokens"] == 32768 for call in calls)
     run_id = response.headers["X-Helmrail-Trace-Id"]
     trace = c.get(f"/v1/traces/{run_id}").json()
-    assert trace["metadata"]["visible_model"] == "helmrail-fugu-ultra"
+    assert trace["metadata"]["visible_model"] == "helmrail-ultra"
     assert trace["metadata"]["visible_model_limits"]["max_provider_calls"] == 24
     assert trace["metadata"]["budget"]["max_provider_calls"] == 24
     assert trace["metadata"]["budget"]["max_output_tokens"] == 32768

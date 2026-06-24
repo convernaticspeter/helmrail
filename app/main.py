@@ -935,7 +935,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 metadata=metadata,
             )
             response.headers["X-Helmrail-Trace-Id"] = run_id
-            # Fugu-style surface: return a normal chat.completion. Keep routing,
+            # coordinator-style surface: return a normal chat.completion. Keep routing,
             # planner JSON, and worker graph in the local trace/contribution path.
             if wants_stream:
                 return _stream_chat_completion(output, trace_id=run_id)

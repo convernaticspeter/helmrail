@@ -178,11 +178,13 @@ DOMAIN_TOOL_AFFINITY: dict[str, list[str]] = {
     "organic_social": ["platform_search", "trend_research", "content_calendar", "web_research"],
     "content": ["web_research", "content_calendar", "source_review"],
     "research": ["web_search", "source_verification", "archive_search", "data_extraction"],
+    "automation": ["browser_control", "browser_qa", "form_fill", "navigation"],
 }
 
 CAPABILITY_TOOL_AFFINITY: dict[str, list[str]] = {
     "backend_development": ["terminal", "test_runner", "api_client"],
     "frontend_development": ["browser_qa", "terminal", "screenshot_review"],
+    "browser_automation": ["browser_control", "browser_qa", "form_fill", "navigation", "screenshot_review"],
     "conversion_tracking_setup": ["tag_manager", "browser_devtools", "network_inspector"],
     "analytics_instrumentation": ["analytics_api", "event_debugger"],
     "google_ads": ["google_ads_api", "keyword_planner", "search_terms_report"],

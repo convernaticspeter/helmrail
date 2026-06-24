@@ -31,7 +31,7 @@ The preview/export pipeline masks:
 - common API key/token/password assignments
 - OpenAI-style `sk-...` tokens
 - GitHub-style `gh*_...` tokens
-- Sakana-style `fish_...` tokens
+- fish-style `fish_...` tokens
 - structured `*-token` / `*-secret` fragments
 - common URL tracking/query secrets
 - local filesystem paths
@@ -64,7 +64,7 @@ Training samples are detached/anonymized records with:
   },
   "routing": {
     "router_family": "llm-coordinator",
-    "workflow_shape": "fugu-style-executed-multi-agent-as-model"
+    "workflow_shape": "coordinator-executed-multi-agent-as-model"
   },
   "privacy": {
     "contains_local_run_id": false,

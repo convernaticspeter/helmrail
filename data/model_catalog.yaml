@@ -44,6 +44,7 @@ capability_taxonomy:
     - data_analysis
     - research_synthesis
     - strategic_reasoning
+    - browser_automation
   architecture:
     - system_architecture
     - process_architecture
@@ -186,6 +187,7 @@ models:
       - copywriting
       - frontend_development
       - backend_development
+      - browser_automation
       - fast
     benchmarks:
       notes: Mid-tier Claude variant. Cost-effective for general work.
@@ -223,6 +225,7 @@ models:
       - data_analysis
       - backend_development
       - technical_implementation
+      - browser_automation
     benchmarks:
       livebench_global:
         score: 76.24
@@ -310,6 +313,26 @@ task_profiles:
     verifier_models: [gpt-5.5-pro]
     evidence_level: heuristic_plus_reasoning_benchmarks
     keywords: [network, networking, dns, vlan, firewall, reverse proxy, vpn, tailscale, wireguard, router, netzwerk]
+
+  browser_operations:
+    label: Browser Operations
+    domain: automation
+    mode: direct
+    priority: 50
+    required_capabilities: [browser_automation, general, fast]
+    helpful_capabilities: [frontend_development, visual_reasoning]
+    capability_weights:
+      browser_automation: 0.50
+      fast: 0.20
+      general: 0.15
+      frontend_development: 0.10
+      visual_reasoning: 0.05
+    tool_affinity: [browser_control, browser_qa, form_fill, navigation, screenshot_review]
+    primary_models: [glm-5.2]
+    fallback_models: [claude-sonnet-4.6, kimi-k2.7-code]
+    evidence_level: cost_policy_plus_heuristic
+    reason: Simple browser/UI operation should use a cheap fast specialist first; reserve frontier models for verification, synthesis, or complex UI/design work.
+    keywords: [browser bedienen, browser steuern, browser automation, browser, browse, click, klick, klicken, form fill, formular ausfüllen, navigate, navigation, website bedienen, webseite bedienen, page interaction, safari, chrome]
 
   frontend_development:
     label: Frontend Development

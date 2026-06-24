@@ -113,16 +113,15 @@ Linked `model_aliases` appear in `GET /v1/models` while the connector is enabled
 
 Kimi coding-plan keys with the `sk-kimi-` prefix use `https://api.kimi.com/coding/v1`; legacy Moonshot API keys may still use `https://api.moonshot.ai/v1`. Helmrail adds the required Kimi Coding user-agent and normalizes temperature for that endpoint.
 
-## Fugu-style coordinator model
+## Coordinator model
 
-Helmrail exposes Fugu-style coordinator models through the normal OpenAI-compatible `/v1/chat/completions` API:
+Helmrail exposes coordinator models through the normal OpenAI-compatible `/v1/chat/completions` API:
 
 | Model | Use |
 |---|---|
-| `helmrail-fugu` | Standard Fugu-style visible model: hidden coordinator + worker routing with the normal request budget. |
-| `helmrail-coordinator` / `helmrail-auto` | Backward-compatible aliases for `helmrail-fugu`. |
-| `helmrail-fugu-ultra` | Ultra tier for expensive project bootstraps, complex coding, and high-stakes synthesis. |
-| `helmrail-ultra` | Backward-compatible alias for `helmrail-fugu-ultra`. |
+| `helmrail-standard` | Standard visible model: hidden coordinator + worker routing with the normal request budget. |
+| `helmrail-coordinator` / `helmrail-auto` | Backward-compatible aliases for `helmrail-standard`. |
+| `helmrail-ultra` | Ultra tier for expensive project bootstraps, complex coding, and high-stakes synthesis. |
 
 Standard uses the normal 8-call/16k-output request budget. Ultra uses a larger 24-call/32k-output budget unless the admin explicitly sets global caps via env.
 
@@ -141,7 +140,7 @@ Current coordinator flow:
 5. Run a final hidden API-facing coordinator pass that treats the selected worker/synthesizer output as primary evidence and returns a normal `chat.completion`.
 6. Store raw local trace data for debugging/deletion and immediately create a separate anonymized local training sample (`training_intent: future_coordinator_model`). Nothing uploads automatically.
 
-This follows the Sakana Fugu interface idea: **multi-agent system as a model**. Raw linked provider aliases still work as direct proxy models when called explicitly.
+This follows the model-as-orchestrator interface idea: **multi-agent system as a model**. Raw linked provider aliases still work as direct proxy models when called explicitly.
 
 ### Automatic anonymized training samples
 
@@ -206,10 +205,11 @@ The model catalog (`data/model_catalog.yaml`) defines capabilities grounded in 2
 
 ### Task profiles
 
-The catalog now separates **model capabilities** from **task profiles**. Task profiles describe real work categories and map them to capability combinations + model mixes. The current catalog includes 32 profiles across:
+The catalog now separates **model capabilities** from **task profiles**. Task profiles describe real work categories and map them to capability combinations + model mixes. The current catalog includes 33 profiles across:
 
 - Architecture: `system_architecture`, `process_architecture`, `cloud_architecture`, `network_infrastructure`
-- Development: `frontend_development`, `backend_development`, `ui_ux_design`
+- Automation: `browser_operations`
+- Development/design: `frontend_development`, `backend_development`, `ui_ux_design`
 - Growth/marketing: `copywriting`, `conversion_optimization`, `strategy_positioning`, `ads_creative`
 - Analytics/tracking: `data_analysis`, `conversion_tracking_setup`
 - Paid media: `google_ads`, `meta_ads`, `bing_ads`, `tiktok_ads`
@@ -224,7 +224,7 @@ Task-profile route plans include orchestration metadata:
 - `tool_affinity` — descriptive integration/tool needs such as `google_ads_api`, `browser_devtools`, `repo_inspection`, or `reddit_search`
 - `orchestration_steps` — executable internal graph (`scope`, `produce`, `fallback_produce`, `verify`, `parallel_candidate`, `synthesize`, etc.) with resolved model workers
 
-`/v1/router/plan` is still side-effect-free and only plans. The coordinator model path (`/v1/chat/completions` with `helmrail-fugu`/`helmrail-coordinator`/`helmrail-auto`/`helmrail-fugu-ultra`/`helmrail-ultra`) now executes the hidden graph and records `execution_result` in the local trace.
+`/v1/router/plan` is still side-effect-free and only plans. The coordinator model path (`/v1/chat/completions` with `helmrail-standard`/`helmrail-coordinator`/`helmrail-auto`/`helmrail-ultra`) now executes the hidden graph and records `execution_result` in the local trace.
 
 ### Policy modes
 
@@ -241,6 +241,7 @@ POST /v1/router/plan
 | `creative_writing` | `direct` | `claude-opus-4.6` | `gemini-3-pro`, `gpt-5.5` | — |
 | `fast` | `race` | `glm-5.2`, `kimi-k2.7-code`, `claude-sonnet-4.6` | — | — |
 | `cheap` | `direct` | `glm-5.2` | `kimi-k2.7-code`, `claude-sonnet-4.6` | — |
+| `browser_operations` | `direct` | `glm-5.2` | `claude-sonnet-4.6`, `kimi-k2.7-code` | — |
 | `high_confidence` | `compare` | `gpt-5.5`, `claude-opus-4.6`, `glm-5.2` | — | `gpt-5.5-pro` |
 
 ### Endpoints
@@ -260,12 +261,11 @@ providers:
     base_url: http://127.0.0.1:8765/v1
     key_env: HELMRAIL_API_KEY
     api_mode: chat_completions
-    model: helmrail-fugu
+    model: helmrail-standard
     models:
-      helmrail-fugu: {context_length: 128000}
+      helmrail-standard: {context_length: 128000}
       helmrail-coordinator: {context_length: 128000}
       helmrail-auto: {context_length: 128000}
-      helmrail-fugu-ultra: {context_length: 128000}
       helmrail-ultra: {context_length: 128000}
       helmrail-openrouter: {context_length: 128000}
       helmrail-kimi: {context_length: 262144}
@@ -276,7 +276,7 @@ Run a smoke test without switching Hermes' default provider:
 ```bash
 hermes chat -q 'Reply with exactly: HERMES_HELMRAIL_OK' \
   --provider custom:helmrail \
-  -m helmrail-fugu \
+  -m helmrail-standard \
   --toolsets safe \
   -Q
 ```

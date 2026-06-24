@@ -6,7 +6,7 @@ def _base_sample(**overrides):
         "sample_id": "sample_test",
         "created_at_bucket": "2026-06",
         "task": {"category": "coding", "input_redacted": {"messages": []}},
-        "routing": {"workflow_shape": "fugu-style-executed-multi-agent-as-model", "mode": "worker_verifier", "worker_classes": []},
+        "routing": {"workflow_shape": "coordinator-executed-multi-agent-as-model", "mode": "worker_verifier", "worker_classes": []},
         "execution": {
             "selected_output_redacted": "GOOD FALLBACK",
             "observations_redacted": [],
@@ -44,7 +44,7 @@ def test_build_preference_pairs_from_worker_verifier_rejection():
 
 def test_build_preference_pairs_from_compare_synthesis():
     sample = _base_sample(
-        routing={"workflow_shape": "fugu-style-executed-multi-agent-as-model", "mode": "compare", "worker_classes": ["candidate", "candidate", "synthesizer"]},
+        routing={"workflow_shape": "coordinator-executed-multi-agent-as-model", "mode": "compare", "worker_classes": ["candidate", "candidate", "synthesizer"]},
         execution={
             "selected_output_redacted": "SYNTH FINAL",
             "observations_redacted": [
@@ -64,7 +64,7 @@ def test_build_preference_pairs_from_compare_synthesis():
 
 def test_build_preference_pairs_from_race_winner():
     sample = _base_sample(
-        routing={"workflow_shape": "fugu-style-executed-multi-agent-as-model", "mode": "race", "worker_classes": ["candidate", "candidate"]},
+        routing={"workflow_shape": "coordinator-executed-multi-agent-as-model", "mode": "race", "worker_classes": ["candidate", "candidate"]},
         execution={
             "selected_output_redacted": "FAST WINNER",
             "observations_redacted": [

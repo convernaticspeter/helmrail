@@ -17,7 +17,7 @@ VALID_MODES = {"direct", "worker_verifier", "compare", "race"}
 
 COORDINATOR_PLANNER_SYSTEM = """You are Helmrail Coordinator Planner.
 
-You are the hidden planning pass for an API-facing multi-agent model, inspired by Sakana Fugu's "multi-agent system as a model" pattern.
+You are the hidden planning pass for an API-facing model-as-orchestrator system.
 
 Return STRICT JSON only. No markdown. No prose outside JSON.
 
@@ -221,7 +221,7 @@ def _chat_completion_output(*, visible_model: str, text: str, usage: dict[str, i
             }
         ],
         "usage": usage,
-        "system_fingerprint": "helmrail-fugu-coordinator-v0.1",
+        "system_fingerprint": "helmrail-standard-coordinator-v0.1",
     }
 
 
@@ -278,7 +278,7 @@ def run_coordinator_chat(
             "error": "No OpenAI-compatible subscription is available for the Helmrail coordinator model.",
             "metadata": {
                 "router_family": "llm-coordinator",
-                "workflow_shape": "fugu-style-coordinator-as-model",
+                "workflow_shape": "coordinator-as-model",
                 "success_signal": "coordinator_unavailable",
                 "coordinator_model_plan": coordinator_model_plan,
                 "budget": budget.snapshot(),
@@ -293,7 +293,7 @@ def run_coordinator_chat(
             "error": "Coordinator subscription has no usable API key or env var.",
             "metadata": {
                 "router_family": "llm-coordinator",
-                "workflow_shape": "fugu-style-coordinator-as-model",
+                "workflow_shape": "coordinator-as-model",
                 "success_signal": "coordinator_missing_secret",
                 "coordinator_model_plan": coordinator_model_plan,
                 "budget": budget.snapshot(),
@@ -393,7 +393,7 @@ def run_coordinator_chat(
             "error": answer_result.get("error") or answer_result,
             "metadata": {
                 "router_family": "llm-coordinator",
-                "workflow_shape": "fugu-style-executed-multi-agent-as-model",
+                "workflow_shape": "coordinator-executed-multi-agent-as-model",
                 "success_signal": "coordinator_answer_error",
                 "coordinator_model_plan": coordinator_model_plan,
                 "coordinator_decision": planner_decision,
@@ -410,14 +410,14 @@ def run_coordinator_chat(
     output = _chat_completion_output(visible_model=visible_model, text=answer_text, usage=_safe_usage(answer_raw))
     metadata = {
         "router_family": "llm-coordinator",
-        "workflow_shape": "fugu-style-executed-multi-agent-as-model",
+        "workflow_shape": "coordinator-executed-multi-agent-as-model",
         "worker_classes": [worker.get("role", "unknown") for worker in worker_plan.get("workers", [])],
         "success_signal": "coordinator_engine_ok" if execution_result.get("success") else "coordinator_engine_fallback_answer",
         "training_sample_schema_version": "0.3",
         "training_intent": "future_coordinator_model",
         "collection_mode": "local_trace_manual_export_only",
         "paper_alignment": {
-            "sakana_fugu": "API-facing model interface over hidden executed multi-agent coordination",
+            "model_as_orchestrator": "API-facing model interface over hidden executed multi-agent coordination",
             "deterministic_classifier": False,
             "coordinator_llm_planner": True,
             "worker_execution": True,

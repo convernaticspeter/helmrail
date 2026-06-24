@@ -32,16 +32,15 @@ Returns service status, auth state, and runtime caps:
 GET /v1/models
 ```
 
-Returns OpenAI-style model list including direct aliases, Fugu-style coordinator aliases, and linked provider aliases. Built-in visible profiles:
+Returns OpenAI-style model list including direct aliases, coordinator aliases, and linked provider aliases. Built-in visible profiles:
 
 | Model | Tier | Route | Request budget |
 |---|---|---|---|
 | `helmrail-fast` | fast | direct provider fallback | 8 calls / 16k output default |
-| `helmrail-fugu` | standard | hidden coordinator + workers | 8 calls / 16k output default |
-| `helmrail-coordinator` | standard | alias for `helmrail-fugu` | 8 calls / 16k output default |
-| `helmrail-auto` | standard | alias for `helmrail-fugu` | 8 calls / 16k output default |
-| `helmrail-fugu-ultra` | ultra | larger hidden coordinator + workers | 24 calls / 32k output default |
-| `helmrail-ultra` | ultra | alias for `helmrail-fugu-ultra` | 24 calls / 32k output default |
+| `helmrail-standard` | standard | hidden coordinator + workers | 8 calls / 16k output default |
+| `helmrail-coordinator` | standard | alias for `helmrail-standard` | 8 calls / 16k output default |
+| `helmrail-auto` | standard | alias for `helmrail-standard` | 8 calls / 16k output default |
+| `helmrail-ultra` | ultra | larger hidden coordinator + workers | 24 calls / 32k output default |
 
 Linked provider aliases such as `helmrail-openrouter`, `helmrail-kimi`, etc. are also listed when configured.
 
