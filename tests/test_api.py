@@ -1,3 +1,5 @@
+import json
+
 from fastapi.testclient import TestClient
 
 from app.config import Settings
@@ -215,11 +217,19 @@ def test_subscription_endpoints_require_auth_when_enabled(tmp_path):
     assert c.get("/v1/router/policies").status_code == 401
     assert c.get("/v1/router/catalog").status_code == 401
     assert c.get("/v1/training-samples").status_code == 401
+    assert c.get("/v1/training-exports/jsonl").status_code == 401
+    assert c.post("/v1/training-samples/sample_missing/feedback", json={"outcome": "accepted"}).status_code == 401
     assert c.post("/v1/router/plan", json={"prompt": "hi"}).status_code == 401
     assert c.get("/v1/subscriptions", headers={"Authorization": "Bearer secret"}).status_code == 200
     assert c.get("/v1/router/policies", headers={"Authorization": "Bearer secret"}).status_code == 200
     assert c.get("/v1/router/catalog", headers={"Authorization": "Bearer secret"}).status_code == 200
     assert c.get("/v1/training-samples", headers={"Authorization": "Bearer secret"}).status_code == 200
+    assert c.get("/v1/training-exports/jsonl", headers={"Authorization": "Bearer secret"}).status_code == 200
+    assert c.post(
+        "/v1/training-samples/sample_missing/feedback",
+        headers={"Authorization": "Bearer secret"},
+        json={"outcome": "accepted"},
+    ).status_code == 404
 
 
 def test_router_plan_selects_coding_worker_verifier_flow(tmp_path, monkeypatch):
@@ -535,6 +545,57 @@ def test_chat_completion_creates_trace_and_contribution_preview(tmp_path):
     assert run_id not in detail_text
     assert "[EMAIL_REDACTED]" in detail_text
     assert detail_body["sample"]["sample_id"] == sample_id
+
+    feedback = c.post(
+        f"/v1/training-samples/{sample_id}/feedback",
+        json={
+            "outcome": "user_corrected",
+            "rating": 4,
+            "corrected_output": "Use the corrected answer for peter@example.com with token=should-hide",
+            "notes": "Useful but needed edit. Call +43 660 1234567 if unclear.",
+            "metadata": {"reviewer_email": "reviewer@example.com"},
+        },
+    )
+    assert feedback.status_code == 200
+    feedback_body = feedback.json()
+    feedback_text = str(feedback_body)
+    assert feedback_body["outcome"] == "user_corrected"
+    assert feedback_body["rating"] == 4
+    assert "peter@example.com" not in feedback_text
+    assert "reviewer@example.com" not in feedback_text
+    assert "should-hide" not in feedback_text
+    assert "+43 660 1234567" not in feedback_text
+    assert "[EMAIL_REDACTED]" in feedback_text
+    assert "[SECRET_REDACTED]" in feedback_text
+
+    listed_feedback = c.get(f"/v1/training-samples/{sample_id}/feedback")
+    assert listed_feedback.status_code == 200
+    assert listed_feedback.json()["data"][0]["feedback_id"] == feedback_body["feedback_id"]
+
+    updated_detail = c.get(f"/v1/training-samples/{sample_id}").json()
+    updated_sample = updated_detail["sample"]
+    assert updated_sample["feedback"]["labels"] == {
+        "outcome": "user_corrected",
+        "rating": 4,
+        "has_correction": True,
+    }
+    updated_text = str(updated_sample)
+    assert run_id not in updated_text
+    assert "peter@example.com" not in updated_text
+    assert "should-hide" not in updated_text
+
+    export = c.get("/v1/training-exports/jsonl")
+    assert export.status_code == 200
+    assert export.headers["content-type"].startswith("application/x-ndjson")
+    lines = [json.loads(line) for line in export.text.splitlines() if line.strip()]
+    assert len(lines) == 1
+    assert lines[0]["sample_id"] == sample_id
+    assert lines[0]["feedback"]["latest"]["outcome"] == "user_corrected"
+    export_text = export.text
+    assert run_id not in export_text
+    assert "peter@example.com" not in export_text
+    assert "should-hide" not in export_text
+    assert "[EMAIL_REDACTED]" in export_text
 
 
 def test_chat_completion_coordinator_behaves_like_model_and_collects_training_trace(tmp_path, monkeypatch):

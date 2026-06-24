@@ -40,6 +40,17 @@ class ContributionPreviewRequest(BaseModel):
     run_id: str = Field(..., description="Local Helmrail trace id")
 
 
+TrainingOutcome = Literal["accepted", "rejected", "edited", "user_corrected", "good", "bad", "partial", "unknown"]
+
+
+class TrainingFeedbackRequest(BaseModel):
+    outcome: TrainingOutcome = Field(..., description="Human or system outcome label for this sample")
+    rating: int | None = Field(default=None, ge=1, le=5, description="Optional 1-5 usefulness/quality rating")
+    corrected_output: Any = Field(default=None, description="Optional redacted-before-storage correction or preferred answer")
+    notes: str = Field(default="", max_length=5000, description="Optional feedback notes; redacted before storage")
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class SubscriptionCreate(BaseModel):
     provider: str = Field(..., min_length=2, max_length=64, description="Provider name, e.g. openai, anthropic, google")
     account_label: str = Field(..., min_length=1, max_length=120, description="Human-readable account name")
@@ -1043,12 +1054,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def training_samples(limit: int = 25) -> dict[str, Any]:
         return {"object": "list", "data": store.list_training_samples(limit=limit)}
 
+    @app.get("/v1/training-exports/jsonl", dependencies=[Depends(auth)])
+    def training_export_jsonl(limit: int = 1000) -> Response:
+        return Response(
+            content=store.export_training_samples_jsonl(limit=limit),
+            media_type="application/x-ndjson",
+            headers={"Content-Disposition": 'attachment; filename="helmrail-training-samples.jsonl"'},
+        )
+
     @app.get("/v1/training-samples/{sample_id}", dependencies=[Depends(auth)])
     def training_sample_detail(sample_id: str) -> dict[str, Any]:
         sample = store.get_training_sample(sample_id)
         if sample is None:
             raise HTTPException(status_code=404, detail="Training sample not found")
         return sample
+
+    @app.get("/v1/training-samples/{sample_id}/feedback", dependencies=[Depends(auth)])
+    def training_sample_feedback(sample_id: str) -> dict[str, Any]:
+        feedback = store.list_training_feedback(sample_id)
+        if feedback is None:
+            raise HTTPException(status_code=404, detail="Training sample not found")
+        return {"object": "list", "data": feedback}
+
+    @app.post("/v1/training-samples/{sample_id}/feedback", dependencies=[Depends(auth)])
+    def add_training_sample_feedback(sample_id: str, request: TrainingFeedbackRequest) -> dict[str, Any]:
+        feedback = store.add_training_feedback(
+            sample_id=sample_id,
+            outcome=request.outcome,
+            rating=request.rating,
+            corrected_output=request.corrected_output,
+            notes=request.notes,
+            metadata=request.metadata,
+        )
+        if feedback is None:
+            raise HTTPException(status_code=404, detail="Training sample not found")
+        return feedback
 
     @app.post("/v1/contributions/preview", dependencies=[Depends(auth)])
     def contribution_preview(request: ContributionPreviewRequest) -> dict[str, Any]:

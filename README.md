@@ -158,9 +158,12 @@ Endpoints:
 
 - `GET /v1/training-samples` — list local anonymized samples
 - `GET /v1/training-samples/{sample_id}` — inspect one anonymized sample
+- `GET /v1/training-samples/{sample_id}/feedback` — list redacted outcome labels for a sample
+- `POST /v1/training-samples/{sample_id}/feedback` — add an outcome label (`accepted`, `rejected`, `edited`, `user_corrected`, `good`, `bad`, `partial`, `unknown`) plus optional rating/correction/notes; correction and notes are redacted before storage
+- `GET /v1/training-exports/jsonl` — export anonymized sample JSONL for local training/eval workflows
 - `POST /v1/contributions/preview` — returns the stored anonymized sample for a run when available
 
-No export/upload happens automatically. Samples are local training-corpus artifacts ready for human review or later explicit export.
+No export/upload happens automatically. Samples are local training-corpus artifacts ready for human review, local JSONL export, or later explicit upload. Feedback labels are stored redacted and embedded into the anonymized sample so the JSONL file can be used directly for supervised/eval/preference-data preparation.
 
 ## Router planning
 

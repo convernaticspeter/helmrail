@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from .redaction import redact_json
 from .training import build_training_sample
 
 
@@ -63,6 +64,21 @@ class TraceStore:
                     schema_version TEXT NOT NULL,
                     sample_json TEXT NOT NULL,
                     metadata_json TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS training_feedback (
+                    feedback_id TEXT PRIMARY KEY,
+                    created_at TEXT NOT NULL,
+                    sample_id TEXT NOT NULL,
+                    outcome TEXT NOT NULL,
+                    rating INTEGER,
+                    corrected_output_json TEXT NOT NULL,
+                    notes TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    FOREIGN KEY(sample_id) REFERENCES training_samples(sample_id)
                 )
                 """
             )
@@ -218,6 +234,115 @@ class TraceStore:
                 (run_id,),
             ).fetchone()
         return None if row is None else self._training_sample_from_row(row)
+
+    def _training_feedback_from_row(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "feedback_id": row["feedback_id"],
+            "created_at": row["created_at"],
+            "sample_id": row["sample_id"],
+            "outcome": row["outcome"],
+            "rating": row["rating"],
+            "corrected_output_redacted": json.loads(row["corrected_output_json"]),
+            "notes_redacted": row["notes"],
+            "metadata_redacted": json.loads(row["metadata_json"]),
+        }
+
+    def list_training_feedback(self, sample_id: str) -> list[dict[str, Any]] | None:
+        if self.get_training_sample(sample_id) is None:
+            return None
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM training_feedback WHERE sample_id = ? ORDER BY created_at ASC",
+                (sample_id,),
+            ).fetchall()
+        return [self._training_feedback_from_row(row) for row in rows]
+
+    def add_training_feedback(
+        self,
+        *,
+        sample_id: str,
+        outcome: str,
+        rating: int | None = None,
+        corrected_output: Any = None,
+        notes: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        feedback_id = f"feedback_{uuid4().hex}"
+        created_at = _utc_now()
+        corrected_output_redacted = redact_json(corrected_output) if corrected_output is not None else None
+        notes_redacted = redact_json(notes)
+        metadata_redacted = redact_json(metadata or {})
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT sample_id, created_at, schema_version, sample_json FROM training_samples WHERE sample_id = ?",
+                (sample_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            conn.execute(
+                """
+                INSERT INTO training_feedback (
+                    feedback_id, created_at, sample_id, outcome, rating,
+                    corrected_output_json, notes, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    feedback_id,
+                    created_at,
+                    sample_id,
+                    outcome,
+                    rating,
+                    json.dumps(corrected_output_redacted, ensure_ascii=False),
+                    str(notes_redacted or ""),
+                    json.dumps(metadata_redacted, ensure_ascii=False),
+                ),
+            )
+            sample = json.loads(row["sample_json"])
+            feedback_record = {
+                "feedback_id": feedback_id,
+                "created_at_bucket": created_at[:10],
+                "outcome": outcome,
+                "rating": rating,
+                "corrected_output_redacted": corrected_output_redacted,
+                "notes_redacted": str(notes_redacted or ""),
+                "metadata_redacted": metadata_redacted,
+            }
+            feedback_block = sample.setdefault("feedback", {})
+            history = feedback_block.setdefault("history", [])
+            if not isinstance(history, list):
+                history = []
+            history.append(feedback_record)
+            feedback_block["history"] = history
+            feedback_block["latest"] = feedback_record
+            feedback_block["labels"] = {
+                "outcome": outcome,
+                "rating": rating,
+                "has_correction": corrected_output is not None,
+            }
+            conn.execute(
+                "UPDATE training_samples SET sample_json = ? WHERE sample_id = ?",
+                (json.dumps(sample, ensure_ascii=False), sample_id),
+            )
+            conn.commit()
+        return {
+            "feedback_id": feedback_id,
+            "created_at": created_at,
+            "sample_id": sample_id,
+            "outcome": outcome,
+            "rating": rating,
+            "corrected_output_redacted": corrected_output_redacted,
+            "notes_redacted": str(notes_redacted or ""),
+            "metadata_redacted": metadata_redacted,
+        }
+
+    def export_training_samples_jsonl(self, limit: int = 1000) -> str:
+        limit = max(1, min(limit, 10000))
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT sample_json FROM training_samples ORDER BY created_at ASC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return "".join(f"{json.dumps(json.loads(row['sample_json']), ensure_ascii=False)}\n" for row in rows)
 
     def create_subscription(
         self,
