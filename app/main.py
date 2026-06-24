@@ -1062,12 +1062,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             headers={"Content-Disposition": 'attachment; filename="helmrail-training-samples.jsonl"'},
         )
 
+    @app.get("/v1/training-preference-pairs", dependencies=[Depends(auth)])
+    def training_preference_pairs(limit: int = 1000) -> dict[str, Any]:
+        return {"object": "list", "data": store.list_preference_pairs(limit=limit)}
+
+    @app.get("/v1/training-preference-exports/jsonl", dependencies=[Depends(auth)])
+    def training_preference_export_jsonl(limit: int = 1000) -> Response:
+        return Response(
+            content=store.export_preference_pairs_jsonl(limit=limit),
+            media_type="application/x-ndjson",
+            headers={"Content-Disposition": 'attachment; filename="helmrail-preference-pairs.jsonl"'},
+        )
+
     @app.get("/v1/training-samples/{sample_id}", dependencies=[Depends(auth)])
     def training_sample_detail(sample_id: str) -> dict[str, Any]:
         sample = store.get_training_sample(sample_id)
         if sample is None:
             raise HTTPException(status_code=404, detail="Training sample not found")
         return sample
+
+    @app.get("/v1/training-samples/{sample_id}/preference-pairs", dependencies=[Depends(auth)])
+    def training_sample_preference_pairs(sample_id: str) -> dict[str, Any]:
+        pairs = store.get_preference_pairs_for_sample(sample_id)
+        if pairs is None:
+            raise HTTPException(status_code=404, detail="Training sample not found")
+        return {"object": "list", "data": pairs}
 
     @app.get("/v1/training-samples/{sample_id}/feedback", dependencies=[Depends(auth)])
     def training_sample_feedback(sample_id: str) -> dict[str, Any]:

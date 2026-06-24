@@ -8,7 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from .redaction import redact_json
-from .training import build_training_sample
+from .training import build_preference_pairs, build_training_sample
 
 
 def _utc_now() -> str:
@@ -202,7 +202,7 @@ class TraceStore:
         ]
 
     def _training_sample_from_row(self, row: sqlite3.Row) -> dict[str, Any]:
-        sample = json.loads(row["sample_json"])
+        sample = redact_json(json.loads(row["sample_json"]))
         return {
             "sample_id": row["sample_id"],
             "created_at": row["created_at"],
@@ -297,7 +297,8 @@ class TraceStore:
                     json.dumps(metadata_redacted, ensure_ascii=False),
                 ),
             )
-            sample = json.loads(row["sample_json"])
+            sample = redact_json(json.loads(row["sample_json"]))
+            sample = sample if isinstance(sample, dict) else {}
             feedback_record = {
                 "feedback_id": feedback_id,
                 "created_at_bucket": created_at[:10],
@@ -342,7 +343,32 @@ class TraceStore:
                 "SELECT sample_json FROM training_samples ORDER BY created_at ASC LIMIT ?",
                 (limit,),
             ).fetchall()
-        return "".join(f"{json.dumps(json.loads(row['sample_json']), ensure_ascii=False)}\n" for row in rows)
+        return "".join(f"{json.dumps(redact_json(json.loads(row['sample_json'])), ensure_ascii=False)}\n" for row in rows)
+
+    def get_preference_pairs_for_sample(self, sample_id: str) -> list[dict[str, Any]] | None:
+        sample_record = self.get_training_sample(sample_id)
+        if sample_record is None:
+            return None
+        sample = sample_record.get("sample") if isinstance(sample_record, dict) else {}
+        return build_preference_pairs(sample if isinstance(sample, dict) else {})
+
+    def list_preference_pairs(self, limit: int = 1000) -> list[dict[str, Any]]:
+        limit = max(1, min(limit, 10000))
+        pairs: list[dict[str, Any]] = []
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT sample_json FROM training_samples ORDER BY created_at ASC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        for row in rows:
+            sample = redact_json(json.loads(row["sample_json"]))
+            pairs.extend(build_preference_pairs(sample if isinstance(sample, dict) else {}))
+            if len(pairs) >= limit:
+                return pairs[:limit]
+        return pairs
+
+    def export_preference_pairs_jsonl(self, limit: int = 1000) -> str:
+        return "".join(f"{json.dumps(pair, ensure_ascii=False)}\n" for pair in self.list_preference_pairs(limit=limit))
 
     def create_subscription(
         self,

@@ -218,17 +218,26 @@ def test_subscription_endpoints_require_auth_when_enabled(tmp_path):
     assert c.get("/v1/router/catalog").status_code == 401
     assert c.get("/v1/training-samples").status_code == 401
     assert c.get("/v1/training-exports/jsonl").status_code == 401
+    assert c.get("/v1/training-preference-pairs").status_code == 401
+    assert c.get("/v1/training-preference-exports/jsonl").status_code == 401
     assert c.post("/v1/training-samples/sample_missing/feedback", json={"outcome": "accepted"}).status_code == 401
+    assert c.get("/v1/training-samples/sample_missing/preference-pairs").status_code == 401
     assert c.post("/v1/router/plan", json={"prompt": "hi"}).status_code == 401
     assert c.get("/v1/subscriptions", headers={"Authorization": "Bearer secret"}).status_code == 200
     assert c.get("/v1/router/policies", headers={"Authorization": "Bearer secret"}).status_code == 200
     assert c.get("/v1/router/catalog", headers={"Authorization": "Bearer secret"}).status_code == 200
     assert c.get("/v1/training-samples", headers={"Authorization": "Bearer secret"}).status_code == 200
     assert c.get("/v1/training-exports/jsonl", headers={"Authorization": "Bearer secret"}).status_code == 200
+    assert c.get("/v1/training-preference-pairs", headers={"Authorization": "Bearer secret"}).status_code == 200
+    assert c.get("/v1/training-preference-exports/jsonl", headers={"Authorization": "Bearer secret"}).status_code == 200
     assert c.post(
         "/v1/training-samples/sample_missing/feedback",
         headers={"Authorization": "Bearer secret"},
         json={"outcome": "accepted"},
+    ).status_code == 404
+    assert c.get(
+        "/v1/training-samples/sample_missing/preference-pairs",
+        headers={"Authorization": "Bearer secret"},
     ).status_code == 404
 
 
@@ -596,6 +605,30 @@ def test_chat_completion_creates_trace_and_contribution_preview(tmp_path):
     assert "peter@example.com" not in export_text
     assert "should-hide" not in export_text
     assert "[EMAIL_REDACTED]" in export_text
+
+    sample_pairs = c.get(f"/v1/training-samples/{sample_id}/preference-pairs")
+    assert sample_pairs.status_code == 200
+    pair_data = sample_pairs.json()["data"]
+    assert len(pair_data) == 1
+    assert pair_data[0]["source"] == "human_feedback"
+    assert pair_data[0]["chosen"]["text"].startswith("Use the corrected")
+    assert pair_data[0]["rejected"]["text"].startswith("Helmrail prototype response")
+
+    all_pairs = c.get("/v1/training-preference-pairs")
+    assert all_pairs.status_code == 200
+    assert all_pairs.json()["data"][0]["pair_id"] == pair_data[0]["pair_id"]
+
+    pair_export = c.get("/v1/training-preference-exports/jsonl")
+    assert pair_export.status_code == 200
+    assert pair_export.headers["content-type"].startswith("application/x-ndjson")
+    pair_lines = [json.loads(line) for line in pair_export.text.splitlines() if line.strip()]
+    assert len(pair_lines) == 1
+    assert pair_lines[0]["source"] == "human_feedback"
+    pair_export_text = pair_export.text
+    assert run_id not in pair_export_text
+    assert "peter@example.com" not in pair_export_text
+    assert "should-hide" not in pair_export_text
+    assert "[EMAIL_REDACTED]" in pair_export_text
 
 
 def test_chat_completion_coordinator_behaves_like_model_and_collects_training_trace(tmp_path, monkeypatch):
