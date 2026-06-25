@@ -65,6 +65,8 @@ If a cap blocks execution, trace metadata contains `budget.provider_calls_blocke
 
 Simple browser/UI operation belongs to `browser_operations`: direct `glm-5.2` primary via the cheapest available route, with Sonnet/Kimi fallbacks. Do not route plain click/form/navigation work to Ultra/frontier models unless the task also needs design judgment, account analysis, or high-stakes verification.
 
+Hermes tools are client-side. For any request carrying `tools`/`tool_choice`, coordinator aliases must use `client-tool-bridge` and return real `tool_calls`; otherwise the model may hallucinate tool results and feel weaker than a direct GPT-5.5 session. Regression-smoke this with a command that forces terminal output and verify the session transcript contains an assistant `tool_calls` message, not just matching text.
+
 ## Pre-update snapshot, not backup theater
 
 Before schema/routing changes or dependency updates, create a manual SQLite snapshot:

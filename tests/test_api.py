@@ -807,6 +807,174 @@ def test_chat_completion_coordinator_behaves_like_model_and_collects_training_tr
     assert preview_body["privacy"]["raw_trace_included"] is False
 
 
+def test_chat_completion_coordinator_bridges_client_tool_calls(tmp_path, monkeypatch):
+    c = client(tmp_path)
+    monkeypatch.setenv("TEST_OPENROUTER_KEY", "local-test-key")
+    created = c.post(
+        "/v1/subscriptions",
+        json={
+            "provider": "openrouter",
+            "account_label": "OpenRouter API",
+            "connector_type": "api_key_env",
+            "credential_ref": "TEST_OPENROUTER_KEY",
+            "base_url": "https://openrouter.ai/api/v1",
+            "model_aliases": ["helmrail-openrouter"],
+            "metadata": {"api_style": "openai_compatible", "upstream_model": "openrouter/auto"},
+        },
+    )
+    assert created.status_code == 200
+    calls = []
+
+    def fake_forward(*, subscription, api_key, payload, upstream_model, timeout=120):
+        calls.append({"payload": payload, "upstream_model": upstream_model, "timeout": timeout, "api_key": api_key})
+        assert payload["tools"][0]["function"]["name"] == "terminal"
+        assert payload["tool_choice"] == "auto"
+        assert "stream" not in payload
+        return {
+            "ok": True,
+            "status_code": 200,
+            "provider": subscription["provider"],
+            "upstream_model": upstream_model,
+            "raw": {
+                "id": "chatcmpl_tool",
+                "object": "chat.completion",
+                "created": 1760000000,
+                "model": upstream_model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call_terminal",
+                                    "type": "function",
+                                    "function": {"name": "terminal", "arguments": '{"command":"printf TOOL_OK"}'},
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            },
+        }
+
+    def fail_engine(*args, **kwargs):
+        raise AssertionError("hidden worker engine must not run before client tool execution")
+
+    monkeypatch.setattr("app.orchestration.openai_compatible_chat_completion", fake_forward)
+    monkeypatch.setattr("app.engine.openai_compatible_chat_completion", fail_engine)
+    response = c.post(
+        "/v1/chat/completions",
+        json={
+            "model": "helmrail-ultra",
+            "messages": [{"role": "user", "content": "Use the terminal tool."}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "terminal",
+                        "description": "Run shell commands",
+                        "parameters": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]},
+                    },
+                }
+            ],
+            "tool_choice": "auto",
+            "stream": False,
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["model"] == "helmrail-ultra"
+    assert body["choices"][0]["message"]["tool_calls"][0]["function"]["name"] == "terminal"
+    assert body["choices"][0]["finish_reason"] == "tool_calls"
+    assert len(calls) == 1
+    assert calls[0]["api_key"] == "local-test-key"
+    assert calls[0]["upstream_model"] == "openai/gpt-5.5"
+    assert calls[0]["payload"]["max_tokens"] == 32768
+    run_id = response.headers["X-Helmrail-Trace-Id"]
+    trace = c.get(f"/v1/traces/{run_id}").json()
+    assert trace["metadata"]["workflow_shape"] == "client-tool-bridge"
+    assert trace["metadata"]["client_tools_passthrough"] is True
+    assert trace["metadata"]["paper_alignment"]["client_tool_bridge"] is True
+
+
+def test_chat_completion_streaming_preserves_tool_calls(tmp_path, monkeypatch):
+    c = client(tmp_path)
+    monkeypatch.setenv("TEST_OPENROUTER_KEY", "local-test-key")
+    assert c.post(
+        "/v1/subscriptions",
+        json={
+            "provider": "openrouter",
+            "account_label": "OpenRouter API",
+            "connector_type": "api_key_env",
+            "credential_ref": "TEST_OPENROUTER_KEY",
+            "base_url": "https://openrouter.ai/api/v1",
+            "model_aliases": ["helmrail-openrouter"],
+            "metadata": {"api_style": "openai_compatible", "upstream_model": "openrouter/auto"},
+        },
+    ).status_code == 200
+
+    def fake_forward(*, subscription, api_key, payload, upstream_model, timeout=120):
+        return {
+            "ok": True,
+            "status_code": 200,
+            "provider": subscription["provider"],
+            "upstream_model": upstream_model,
+            "raw": {
+                "id": "chatcmpl_stream_tool",
+                "object": "chat.completion",
+                "created": 1760000000,
+                "model": upstream_model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call_terminal",
+                                    "type": "function",
+                                    "function": {"name": "terminal", "arguments": '{"command":"printf TOOL_OK"}'},
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            },
+        }
+
+    monkeypatch.setattr("app.orchestration.openai_compatible_chat_completion", fake_forward)
+    response = c.post(
+        "/v1/chat/completions",
+        json={
+            "model": "helmrail-standard",
+            "messages": [{"role": "user", "content": "Use the terminal tool."}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "terminal",
+                        "description": "Run shell commands",
+                        "parameters": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]},
+                    },
+                }
+            ],
+            "stream": True,
+        },
+    )
+    assert response.status_code == 200
+    text = response.text
+    assert "tool_calls" in text
+    assert "call_terminal" in text
+    assert '"finish_reason": "tool_calls"' in text
+
+
 def test_chat_completion_ultra_uses_larger_visible_model_budget(tmp_path, monkeypatch):
     c = client(tmp_path)
     monkeypatch.setenv("TEST_OPENROUTER_KEY", "local-test-key")

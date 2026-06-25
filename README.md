@@ -138,9 +138,10 @@ Current coordinator flow:
    - `race` — parallel candidates; first successful candidate wins
    - `compare` — parallel candidates plus synthesizer
 5. Run a final hidden API-facing coordinator pass that treats the selected worker/synthesizer output as primary evidence and returns a normal `chat.completion`.
-6. Store raw local trace data for debugging/deletion and immediately create a separate anonymized local training sample (`training_intent: future_coordinator_model`). Nothing uploads automatically.
+6. If the client request includes OpenAI/Hermes `tools` or legacy `functions`, switch to **client tool bridge** mode instead of hidden worker execution: preserve the supplied tool schemas, return upstream `tool_calls` to the client, and let Hermes execute the tool loop client-side.
+7. Store raw local trace data for debugging/deletion and immediately create a separate anonymized local training sample (`training_intent: future_coordinator_model`). Nothing uploads automatically.
 
-This follows the model-as-orchestrator interface idea: **multi-agent system as a model**. Raw linked provider aliases still work as direct proxy models when called explicitly.
+This follows the model-as-orchestrator interface idea: **multi-agent system as a model**. Raw linked provider aliases still work as direct proxy models when called explicitly. Client-side Hermes tools are not internal Helmrail tools; they must be passed through as `tool_calls` or Hermes cannot execute terminal/browser/file actions.
 
 ### Automatic anonymized training samples
 

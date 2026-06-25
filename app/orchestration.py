@@ -225,6 +225,140 @@ def _chat_completion_output(*, visible_model: str, text: str, usage: dict[str, i
     }
 
 
+def _client_tool_specs(payload: dict[str, Any]) -> list[Any]:
+    tools = payload.get("tools")
+    if isinstance(tools, list) and tools:
+        return tools
+    functions = payload.get("functions")
+    if isinstance(functions, list) and functions:
+        return functions
+    return []
+
+
+def _run_client_tool_bridge(
+    *,
+    visible_model: str,
+    payload: dict[str, Any],
+    coordinator_subscription: dict[str, Any],
+    coordinator_worker: dict[str, Any],
+    coordinator_model_plan: dict[str, Any] | None,
+    api_key: str,
+    upstream_model: str,
+    limits: RuntimeLimits,
+    budget: CallBudget,
+) -> dict[str, Any]:
+    """Let the client-owned Hermes tool loop pass through unchanged.
+
+    Hermes executes tools client-side. If Helmrail consumes a request with
+    `tools` and returns only final text, Hermes never sees tool_calls and the
+    model behaves like a weaker no-tool chatbot. In this mode Helmrail still
+    resolves the coordinator model/subscription, but it does not run hidden
+    workers before the client has had a chance to execute requested tools.
+    """
+    if not budget.reserve():
+        blocked = budget_exhausted_result(provider=str(coordinator_subscription.get("provider") or ""), upstream_model=upstream_model)
+        status_code_raw = blocked.get("status_code")
+        status_code = status_code_raw if isinstance(status_code_raw, int) else 429
+        return {
+            "ok": False,
+            "status_code": status_code,
+            "error": blocked.get("error") or blocked,
+            "metadata": {
+                "router_family": "llm-coordinator",
+                "workflow_shape": "client-tool-bridge",
+                "success_signal": "budget_exhausted",
+                "client_tools_passthrough": True,
+                "coordinator_model_plan": coordinator_model_plan,
+                "budget": budget.snapshot(),
+            },
+        }
+
+    provider_payload = apply_openai_output_cap(dict(payload), limits.max_output_tokens)
+    provider_payload.pop("stream", None)
+    result = openai_compatible_chat_completion(
+        subscription=coordinator_subscription,
+        api_key=api_key,
+        payload=provider_payload,
+        upstream_model=upstream_model,
+        timeout=limits.provider_timeout_seconds,
+    )
+    if not result.get("ok"):
+        return {
+            "ok": False,
+            "status_code": int(result.get("status_code") or 502),
+            "error": result.get("error") or result,
+            "metadata": {
+                "router_family": "llm-coordinator",
+                "workflow_shape": "client-tool-bridge",
+                "success_signal": "client_tool_bridge_error",
+                "client_tools_passthrough": True,
+                "coordinator_model_plan": coordinator_model_plan,
+                "coordinator_model": coordinator_worker.get("model_id"),
+                "coordinator_upstream_model": upstream_model,
+                "coordinator_provider": coordinator_subscription.get("provider"),
+                "visible_model": visible_model,
+                "visible_model_limits": limits.__dict__,
+                "budget": budget.snapshot(),
+                "provider_result": {
+                    "ok": bool(result.get("ok")),
+                    "status_code": result.get("status_code"),
+                    "provider": result.get("provider"),
+                    "upstream_model": result.get("upstream_model"),
+                },
+            },
+        }
+
+    raw_candidate = result.get("raw")
+    output = raw_candidate if isinstance(raw_candidate, dict) else {}
+    if not output:
+        return {
+            "ok": False,
+            "status_code": 502,
+            "error": "Provider returned a non-object chat completion payload",
+            "metadata": {
+                "router_family": "llm-coordinator",
+                "workflow_shape": "client-tool-bridge",
+                "success_signal": "client_tool_bridge_bad_payload",
+                "client_tools_passthrough": True,
+                "budget": budget.snapshot(),
+            },
+        }
+    output = dict(output)
+    output["model"] = visible_model
+    metadata = {
+        "router_family": "llm-coordinator",
+        "workflow_shape": "client-tool-bridge",
+        "worker_classes": ["client_tool_capable_chat"],
+        "success_signal": "client_tool_bridge_ok",
+        "client_tools_passthrough": True,
+        "client_tool_count": len(_client_tool_specs(payload)),
+        "training_sample_schema_version": "0.3",
+        "training_intent": "future_coordinator_model",
+        "collection_mode": "local_trace_manual_export_only",
+        "paper_alignment": {
+            "model_as_orchestrator": "Client tool execution takes precedence over hidden worker orchestration.",
+            "deterministic_classifier": False,
+            "coordinator_llm_planner": False,
+            "worker_execution": False,
+            "client_tool_bridge": True,
+        },
+        "visible_model": visible_model,
+        "visible_model_limits": limits.__dict__,
+        "coordinator_model": coordinator_worker.get("model_id"),
+        "coordinator_upstream_model": upstream_model,
+        "coordinator_provider": coordinator_subscription.get("provider"),
+        "coordinator_model_plan": coordinator_model_plan,
+        "budget": budget.snapshot(),
+        "provider_result": {
+            "ok": bool(result.get("ok")),
+            "status_code": result.get("status_code"),
+            "provider": result.get("provider"),
+            "upstream_model": result.get("upstream_model"),
+        },
+    }
+    return {"ok": True, "status_code": 200, "output": output, "metadata": metadata}
+
+
 def _call_openai_worker(
     *,
     subscription: dict[str, Any],
@@ -301,6 +435,19 @@ def run_coordinator_chat(
         }
 
     upstream_model = str(coordinator_worker.get("upstream_model") or coordinator_worker.get("model_id") or COORDINATOR_MODEL_ID)
+    if _client_tool_specs(payload):
+        return _run_client_tool_bridge(
+            visible_model=visible_model,
+            payload=payload,
+            coordinator_subscription=coordinator_subscription,
+            coordinator_worker=coordinator_worker,
+            coordinator_model_plan=coordinator_model_plan,
+            api_key=api_key,
+            upstream_model=upstream_model,
+            limits=active_limits,
+            budget=budget,
+        )
+
     catalog_summary = _catalog_summary(catalog)
     conversation = _conversation_summary(messages)
     planning_context = {

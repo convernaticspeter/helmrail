@@ -174,37 +174,62 @@ def _safe_route(subscription: dict[str, Any], upstream_model: str) -> dict[str, 
     }
 
 
-def _chat_completion_text(output: dict[str, Any]) -> str:
+def _chat_completion_message(output: dict[str, Any]) -> dict[str, Any]:
     choices = output.get("choices")
     if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
-        return ""
+        return {}
     message = choices[0].get("message")
-    if not isinstance(message, dict):
-        return ""
+    return message if isinstance(message, dict) else {}
+
+
+def _chat_completion_text(output: dict[str, Any]) -> str:
+    message = _chat_completion_message(output)
     content = message.get("content")
     return content if isinstance(content, str) else ""
+
+
+def _chat_completion_finish_reason(output: dict[str, Any]) -> str:
+    choices = output.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return "stop"
+    reason = choices[0].get("finish_reason")
+    return reason if isinstance(reason, str) and reason else "stop"
 
 
 def _stream_chat_completion(output: dict[str, Any], *, trace_id: str = "") -> StreamingResponse:
     completion_id = str(output.get("id") or f"chatcmpl_{uuid4().hex}")
     created = int(output.get("created") or time.time())
     model = str(output.get("model") or "helmrail")
+    message = _chat_completion_message(output)
     content = _chat_completion_text(output)
+    tool_calls = message.get("tool_calls")
+    finish_reason = _chat_completion_finish_reason(output)
 
     def events():
+        delta: dict[str, Any] = {"role": "assistant"}
+        if content:
+            delta["content"] = content
+        if isinstance(tool_calls, list) and tool_calls:
+            delta["tool_calls"] = [
+                {"index": index, **tool_call}
+                for index, tool_call in enumerate(tool_calls)
+                if isinstance(tool_call, dict)
+            ]
+        if "content" not in delta and "tool_calls" not in delta:
+            delta["content"] = ""
         first = {
             "id": completion_id,
             "object": "chat.completion.chunk",
             "created": created,
             "model": model,
-            "choices": [{"index": 0, "delta": {"role": "assistant", "content": content}, "finish_reason": None}],
+            "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
         }
         final = {
             "id": completion_id,
             "object": "chat.completion.chunk",
             "created": created,
             "model": model,
-            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+            "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
         }
         yield f"data: {json.dumps(first, ensure_ascii=False)}\n\n"
         yield f"data: {json.dumps(final, ensure_ascii=False)}\n\n"

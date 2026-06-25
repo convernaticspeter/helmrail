@@ -92,7 +92,7 @@ GET /v1/router/catalog
 POST /v1/router/plan
 ```
 
-`/v1/router/plan` is side-effect-free. Coordinator aliases in `/v1/chat/completions` execute the hidden graph.
+`/v1/router/plan` is side-effect-free. Coordinator aliases in `/v1/chat/completions` execute the hidden graph when no client tools are present. If a request includes OpenAI-compatible `tools`/`tool_choice` or legacy `functions`, coordinator aliases switch to `client-tool-bridge`: Helmrail forwards the tool schema to the resolved coordinator model and streams/returns `tool_calls` back to the client so Hermes can execute terminal/browser/file tools itself.
 
 ## Subscriptions
 
